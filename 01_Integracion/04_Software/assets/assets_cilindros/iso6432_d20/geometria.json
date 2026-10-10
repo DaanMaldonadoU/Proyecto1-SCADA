@@ -1,0 +1,25 @@
+{
+  "viewBox": "0 0 215 40",
+  "eje_y": 20,
+  "cara_trasera_x": 6,
+  "cara_delantera_x": 116,
+  "carrera_mm": 50,
+  "tubo_x": [
+    22,
+    100
+  ],
+  "muelle": {
+    "x_inicio": 35.5,
+    "x_apoyo": 95.5,
+    "longitud": 60.0
+  },
+  "sensor_SC": {
+    "x": 30,
+    "y": 30.5
+  },
+  "sensor_SE": {
+    "x": 80,
+    "y": 30.5
+  },
+  "piston_retraido_x": 25
+}

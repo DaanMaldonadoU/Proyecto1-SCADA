@@ -1,0 +1,30 @@
+module componentes
+singleton Estilo 1.0 Estilo.qml
+PanelHmi 1.0 PanelHmi.qml
+CabeceraHmi 1.0 CabeceraHmi.qml
+BandaAlarmas 1.0 BandaAlarmas.qml
+PieInstitucional 1.0 PieInstitucional.qml
+Cilindro 1.0 Cilindro.qml
+CadenaNeumatica 1.0 CadenaNeumatica.qml
+SimularPlanta 1.0 SimularPlanta.qml
+Sinoptico 1.0 Sinoptico.qml
+Grafcet 1.0 Grafcet.qml
+Mandos 1.0 Mandos.qml
+Parametros 1.0 Parametros.qml
+FilaParametro 1.0 FilaParametro.qml
+Cronograma 1.0 Cronograma.qml
+MonitorES 1.0 MonitorES.qml
+Registro 1.0 Registro.qml
+Latencia 1.0 Latencia.qml
+Chip 1.0 Chip.qml
+BotonMini 1.0 BotonMini.qml
+Check 1.0 Check.qml
+Interruptor 1.0 Interruptor.qml
+CapasCilindro 1.0 CapasCilindro.qml
+FranjaMando 1.0 FranjaMando.qml
+VentanaHistorial 1.0 VentanaHistorial.qml
+ConexionCampo 1.0 ConexionCampo.qml
+ConexionCasilla 1.0 ConexionCasilla.qml
+ConexionLista 1.0 ConexionLista.qml
+ConexionTarjetaModo 1.0 ConexionTarjetaModo.qml
+RejillaHmi 1.0 RejillaHmi.qml

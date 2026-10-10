@@ -1,0 +1,30 @@
+* text=auto
+*.py   text eol=lf
+*.md   text eol=lf
+*.bat  text eol=crlf
+
+# RSLogix 500: el programa y su base de documentación son binarios
+*.RSS  binary
+*.rss  binary
+*.ACH  binary
+*.CFG  binary
+*.EAS  binary
+*.EIC  binary
+*.ERP  binary
+*.ESG  binary
+*.NAM  binary
+*.PRF  binary
+
+*.ct   binary
+*.xlsx binary
+*.docx binary
+*.pptx binary
+*.mpp  binary
+*.pdf  binary
+*.dll  binary
+*.png  binary
+
+# Simulink y tipografías
+*.slx  binary
+*.ttf  binary
+*.cmd  text eol=crlf

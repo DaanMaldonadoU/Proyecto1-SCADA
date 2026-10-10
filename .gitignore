@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv*/
+venv/
+.pytest_cache/
+
+# Datos que el HMI y el gemelo generan al ejecutarse (conexión, calibración, historial, claves)
+datos/
+*.sqlite
+*.sqlite3
+*.db
+*.log
+
+# MATLAB / Simulink
+slprj/
+*.slxc
+*.asv
+*.autosave
+
+# RSLogix 500: respaldos automáticos
+*_BAK*.RSS
+
+# Sistema y editores
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

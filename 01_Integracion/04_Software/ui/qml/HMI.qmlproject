@@ -1,0 +1,38 @@
+// Proyecto de Qt Design Studio para ver y editar el HMI con el editor visual.
+// Abrir con: Qt Design Studio → File → Open File or Project… → este archivo.
+//
+// - PantallaHmi.qml es la pantalla completa (la misma que usa Main.qml en el HMI real).
+// - dummydata/ trae los datos de prueba que en el HMI real pone Python (planta, conexion,
+//   historial, datosInstitucion, rutaAssets, configVentana); Design Studio carga cada archivo
+//   como propiedad de contexto con su nombre. Se regeneran con
+//   .venv\Scripts\python.exe ui\herramientas\generar_dummydata.py
+// - Los gráficos y el sistema de diseño están en ../../assets/assets_cilindros/ (fuera de esta
+//   carpeta); se cargan por ruta relativa, igual que en el HMI real.
+import QmlProject 1.1
+
+Project {
+    mainFile: "PantallaHmi.qml"
+    mainUiFile: "PantallaHmi.qml"
+
+    QmlFiles {
+        directory: "."
+    }
+    JavaScriptFiles {
+        directory: "."
+    }
+    ImageFiles {
+        directory: "."
+    }
+    Files {
+        filter: "qmldir"
+        directory: "."
+    }
+    Files {
+        filter: "*.ttf;*.otf"
+        directory: "../../assets/assets_cilindros/fuentes"
+    }
+
+    importPaths: [ "." ]
+
+    qt6Project: true
+}

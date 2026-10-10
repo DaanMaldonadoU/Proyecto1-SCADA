@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consola del gemelo</title>
+<!--
+  Consola de prueba del servidor del gemelo (digital_twin/servidor_web).
+  Sirve para comprobar el enlace completo sin depender del frontend 3D/SVG:
+  sesión, estado en vivo, mando, órdenes con permisos, actividad, usuarios en línea y cuentas.
+  Contrato de mensajes: mds/ENLACE_WEB.md. El frontend del gemelo (index.html) usa lo mismo.
+-->
+<style>
+  :root { --fondo:#0f1418; --panel:#182027; --borde:#2a3540; --texto:#dfe6ec; --tenue:#8a99a6;
+          --ok:#3fb950; --aviso:#d29922; --alarma:#f85149; --activo:#2f81f7; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.4 system-ui, Segoe UI, sans-serif; background:var(--fondo); color:var(--texto); }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--borde); }
+  header h1 { font-size:16px; margin:0 auto 0 0; }
+  main { display:grid; gap:12px; padding:12px 16px; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); }
+  section { background:var(--panel); border:1px solid var(--borde); border-radius:8px; padding:12px; min-width:0; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--tenue); margin:0 0 8px; }
+  button { background:#24303a; color:var(--texto); border:1px solid var(--borde); border-radius:6px; padding:7px 12px; cursor:pointer; font:inherit; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  button.start { border-color:var(--ok); } button.stop { border-color:var(--alarma); } button.reset { border-color:var(--activo); }
+  input, select { background:#10171c; color:var(--texto); border:1px solid var(--borde); border-radius:6px; padding:6px 8px; font:inherit; max-width:100%; }
+  .chip { padding:3px 8px; border-radius:99px; border:1px solid var(--borde); font-size:12px; }
+  .ok { color:var(--ok); } .aviso { color:var(--aviso); } .alarma { color:var(--alarma); } .tenue { color:var(--tenue); }
+  .fila { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:6px 0; }
+  .cil { display:grid; grid-template-columns:34px 1fr 90px; gap:8px; align-items:center; margin:6px 0; }
+  .barra { height:14px; background:#10171c; border:1px solid var(--borde); border-radius:4px; position:relative; }
+  .barra i { position:absolute; left:0; top:0; bottom:0; background:var(--activo); border-radius:3px; }
+  .etapas { display:flex; gap:4px; flex-wrap:wrap; }
+  .etapas span { width:34px; text-align:center; padding:4px 0; border:1px solid var(--borde); border-radius:4px; }
+  .etapas span.on { background:var(--activo); border-color:var(--activo); }
+  .log { max-height:260px; overflow:auto; font-size:12px; font-family:ui-monospace, Consolas, monospace; }
+  .log div { padding:2px 0; border-bottom:1px solid #1f2830; overflow-wrap:anywhere; }
+  #login { max-width:340px; margin:60px auto; }
+  table { width:100%; border-collapse:collapse; font-size:12px; } td, th { text-align:left; padding:3px 4px; border-bottom:1px solid #1f2830; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<section id="login" hidden>
+  <h2>Iniciar sesión</h2>
+  <div class="fila"><input id="lu" placeholder="usuario" autocomplete="username"></div>
+  <div class="fila"><input id="lc" type="password" placeholder="contraseña" autocomplete="current-password"></div>
+  <div class="fila"><button id="lb">Entrar</button> <span id="lmsg" class="alarma"></span></div>
+</section>
+
+<div id="app" hidden>
+<header>
+  <h1>Gemelo digital · consola</h1>
+  <span class="chip" id="planta">planta: —</span>
+  <span class="chip" id="modo">—</span>
+  <span class="chip" id="yo">—</span>
+  <button id="salir">Salir</button>
+</header>
+<main>
+  <section>
+    <h2>Proceso</h2>
+    <div class="etapas" id="etapas"></div>
+    <div class="fila tenue" id="info"></div>
+    <div id="cils"></div>
+  </section>
+  <section>
+    <h2>Mando</h2>
+    <div id="mando" class="fila"></div>
+    <div class="fila">
+      <button id="pedir">Pedir mando</button>
+      <button id="liberar">Liberar</button>
+    </div>
+    <div class="fila">
+      <button class="start" data-pulso="STARTV">START</button>
+      <button class="stop" data-pulso="STOPV">STOP</button>
+      <button class="reset" data-pulso="RESETV">RESET</button>
+    </div>
+    <div class="fila">
+      <select id="ptag"><option>T_ESPERA</option><option>T_NEUM</option><option>N_CICLOS</option></select>
+      <input id="pval" type="number" min="0" max="32767" style="width:100px" placeholder="valor">
+      <button id="pesc">Escribir</button>
+    </div>
+    <div class="fila tenue" id="res"></div>
+  </section>
+  <section>
+    <h2>En línea</h2>
+    <div id="conectados" class="log"></div>
+  </section>
+  <section>
+    <h2>Actividad (quién, qué, cuándo)</h2>
+    <div id="actividad" class="log"></div>
+  </section>
+  <section>
+    <h2>Eventos de la planta</h2>
+    <div id="eventos" class="log"></div>
+  </section>
+  <section id="admin" hidden>
+    <h2>Cuentas (admin)</h2>
+    <div class="fila">
+      <input id="nu" placeholder="usuario" style="width:110px">
+      <input id="nc" type="password" placeholder="contraseña" style="width:120px">
+      <select id="nr"></select>
+      <button id="ncrear">Crear</button>
+    </div>
+    <table id="tusuarios"></table>
+  </section>
+</main>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const hora = (t) => t ? new Date(t * 1000).toLocaleTimeString("es-MX", {hour12:false}) : "--";
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let ws = null, yo = null, snap = null, ref = 0, roles = [];
+
+function linea(caja, html) {
+  const d = document.createElement("div"); d.innerHTML = html;
+  caja.prepend(d); while (caja.children.length > 200) caja.lastChild.remove();
+}
+
+async function api(ruta, cuerpo) {
+  const r = await fetch(ruta, cuerpo === undefined ? {credentials:"same-origin"} :
+    {method:"POST", credentials:"same-origin", headers:{"Content-Type":"application/json"}, body:JSON.stringify(cuerpo)});
+  let j = {}; try { j = await r.json(); } catch (e) {}
+  return Object.assign({status:r.status}, j);
+}
+
+async function iniciar() {
+  const r = await api("/api/yo");
+  if (!r.ok) { $("login").hidden = false; $("app").hidden = true; return; }
+  $("login").hidden = true; $("app").hidden = false;
+  conectar();
+}
+
+$("lb").onclick = async () => {
+  const r = await api("/api/login", {usuario:$("lu").value, clave:$("lc").value});
+  if (r.ok) { $("lmsg").textContent = ""; iniciar(); } else $("lmsg").textContent = r.msg || "error";
+};
+$("lc").onkeydown = (e) => { if (e.key === "Enter") $("lb").click(); };
+$("salir").onclick = async () => { await api("/api/logout", {}); if (ws) ws.close(); location.reload(); };
+
+function conectar() {
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/web");
+  ws.onmessage = (m) => recibir(JSON.parse(m.data));
+  ws.onclose = (e) => { $("planta").textContent = "desconectado"; if (e.code !== 4001) setTimeout(conectar, 2000); else location.reload(); };
+}
+
+function orden(cmd) { ws.send(JSON.stringify({tipo:"orden", ref:++ref, cmd})); }
+
+function recibir(m) {
+  if (m.tipo === "bienvenida") {
+    yo = m.yo; roles = m.roles || [];
+    $("yo").textContent = yo.usuario + " · " + yo.rol;
+    planta(m.planta_en_linea, m.planta);
+    (m.eventos || []).forEach(evento);
+    if (m.snap) pintar(m.snap);
+    permisos();
+    if (yo.permisos.admin) cargarUsuarios();
+  } else if (m.tipo === "yo") { yo = m; $("yo").textContent = yo.usuario + " · " + yo.rol; permisos(); }
+  else if (m.tipo === "snap") pintar(m.s);
+  else if (m.tipo === "evt") evento(m.e);
+  else if (m.tipo === "planta") planta(m.en_linea, m.planta);
+  else if (m.tipo === "presencia") {
+    $("conectados").innerHTML = m.conectados.map((u) =>
+      `<div>${esc(u.usuario)} <span class="tenue">(${esc(u.rol)}) desde ${hora(u.desde)}</span></div>`).join("");
+  } else if (m.tipo === "actividad") {
+    linea($("actividad"), `${hora(m.t)} <b>${esc(m.usuario)}</b> <span class="tenue">(${esc(m.rol)})</span> ${esc(m.detalle)} → <span class="${m.ok ? "ok" : "alarma"}">${m.ok ? "aceptada" : "rechazada"}</span> ${esc(m.msg)}`);
+  } else if (m.tipo === "resultado") {
+    $("res").innerHTML = `<span class="${m.ok ? "ok" : "alarma"}">${m.ok ? "✔" : "✘"} ${esc(m.msg)}</span>`;
+  }
+}
+
+function planta(enLinea, info) {
+  $("planta").innerHTML = enLinea ? `<span class="ok">planta en línea</span>` : `<span class="alarma">planta fuera de línea</span>`;
+  if (info && info.modo) $("modo").textContent = info.modo;
+}
+
+function evento(e) {
+  if (!e) return;
+  linea($("eventos"), `${hora(e.t)} <span class="${e.nivel === "info" ? "tenue" : e.nivel}">${esc(e.nivel)}</span> ${esc(e.msg)}`);
+}
+
+function permisos() {
+  const p = yo.permisos, m = snap && snap.mando, mio = m && m.titular && m.titular.origen === "web" && m.titular.usuario === yo.usuario;
+  const hab = m && m.remoto_habilitado;
+  document.querySelectorAll("[data-pulso]").forEach((b) => {
+    b.disabled = !p.mandos || (b.dataset.pulso !== "STOPV" && !mio);
+  });
+  $("pesc").disabled = !p.parametros || !mio;
+  $("pedir").disabled = !p.mandos || !hab || mio;
+  $("liberar").disabled = !mio;
+  $("admin").hidden = !p.admin;
+}
+
+function pintar(s) {
+  snap = s;
+  $("modo").textContent = s.modo + (s.conectado ? "" : " · sin PLC");
+  $("etapas").innerHTML = Array.from({length:9}, (_, i) => `<span class="${s.etapa === i ? "on" : ""}">X${i}</span>`).join("");
+  const b = s.bits || {}, n = s.ints || {};
+  $("info").textContent = `ACTIVE ${b.ACTIVE ? 1 : 0} · ciclos ${n.C_ACC ?? "-"}/${n.C_PRE ?? "-"} · t etapa ${(+s.t_etapa || 0).toFixed(1)} s · fines ${s.fines}` + (s.pos_estimada ? " · posición estimada" : "");
+  const pos = (s.pos || []).concat(s.pos_neum || []);
+  $("cils").innerHTML = ["1A","2A","3A","4A","5A"].map((c, i) =>
+    `<div class="cil"><b>${c}</b><div class="barra"><i style="width:${Math.round((pos[i] || 0) * 100)}%"></i></div>` +
+    `<span class="tenue">${i < 3 ? (b["SC" + (i+1)] ? "SC" : "") + " " + (b["SE" + (i+1)] ? "SE" : "") + " " + (b["EV_E" + (i+1)] ? "E+" : "") + (b["EV_C" + (i+1)] ? "C−" : "") : "neumático"}</span></div>`).join("");
+  const m = s.mando || {};
+  $("mando").innerHTML = `remoto ${m.remoto_habilitado ? '<span class="ok">habilitado</span>' : '<span class="aviso">deshabilitado en el HMI</span>'} · ` +
+    (m.titular ? `lo tiene <b>${esc(m.titular.usuario)}</b> (${esc(m.titular.rol)}) · vence en ${Math.round(m.vence_en_s)} s` : "mando libre");
+  if (yo) permisos();
+}
+
+$("pedir").onclick = () => orden({op:"mando", accion:"pedir"});
+$("liberar").onclick = () => orden({op:"mando", accion:"liberar"});
+document.querySelectorAll("[data-pulso]").forEach((b) => b.onclick = () => orden({op:"pulso", tag:b.dataset.pulso}));
+$("pesc").onclick = () => orden({op:"escribir", tag:$("ptag").value, valor:parseInt($("pval").value, 10)});
+
+async function cargarUsuarios() {
+  const r = await api("/api/usuarios");
+  if (!r.ok) return;
+  $("nr").innerHTML = r.roles.map((x) => `<option>${x}</option>`).join("");
+  $("tusuarios").innerHTML = "<tr><th>usuario</th><th>rol</th><th></th></tr>" + r.usuarios.map((u) =>
+    `<tr><td>${esc(u.usuario)}${u.activo ? "" : " (inactivo)"}</td><td><select data-rol="${esc(u.usuario)}">` +
+    r.roles.map((x) => `<option ${x === u.rol ? "selected" : ""}>${x}</option>`).join("") +
+    `</select></td><td><button data-borrar="${esc(u.usuario)}">Borrar</button></td></tr>`).join("");
+  document.querySelectorAll("[data-rol]").forEach((s) => s.onchange = async () => {
+    const x = await api("/api/usuarios", {accion:"rol", usuario:s.dataset.rol, rol:s.value}); if (!x.ok) alert(x.msg); cargarUsuarios(); });
+  document.querySelectorAll("[data-borrar]").forEach((b) => b.onclick = async () => {
+    if (!confirm("¿Borrar " + b.dataset.borrar + "?")) return;
+    const x = await api("/api/usuarios", {accion:"borrar", usuario:b.dataset.borrar}); if (!x.ok) alert(x.msg); cargarUsuarios(); });
+}
+$("ncrear").onclick = async () => {
+  const x = await api("/api/usuarios", {accion:"crear", usuario:$("nu").value, clave:$("nc").value, rol:$("nr").value});
+  if (!x.ok) alert(x.msg); else { $("nu").value = $("nc").value = ""; cargarUsuarios(); }
+};
+
+iniciar();
+</script>
+</body>
+</html>

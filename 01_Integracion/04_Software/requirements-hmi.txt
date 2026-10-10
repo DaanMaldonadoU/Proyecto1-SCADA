@@ -1,0 +1,13 @@
+# HMI — Python 64 bits moderno (3.12 o 3.13). PySide6 no tiene ruedas de 32 bits.
+PySide6>=6.8,<7
+pyzmq>=26,<27
+msgpack>=1.0,<2
+loguru>=0.7,<0.8
+
+# Alternativa para Qt 5 si solo hay Python de 32 bits: PyQt5==5.15.11 y PyQt5-Qt5==5.15.2 (tienen ruedas win32).
+# El HMI elige el binding instalado (ui/qt_compat.py); con los dos instalados, HMI_QT=PyQt5 fuerza PyQt5.
+
+# Puente web (python -m puente): enlace saliente hacia el servidor del gemelo por Cloudflare.
+aiohttp>=3.9,<4
+# MQTT opcional del puente (python -m puente --mqtt …) hacia el broker del gemelo; pura Python.
+paho-mqtt>=2.0,<3

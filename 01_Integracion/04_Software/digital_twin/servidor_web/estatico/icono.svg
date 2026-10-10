@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Gemelo digital: cilindro neumático">
+  <!-- Icono del gemelo digital: un cilindro neumático con el vástago afuera, sobre el azul del fondo de la página. -->
+  <rect width="128" height="128" rx="28" fill="#1c2438"/>
+  <rect x="18" y="46" width="62" height="36" rx="6" fill="#d8dbe1"/>
+  <rect x="18" y="46" width="62" height="36" rx="6" fill="none" stroke="#16171a" stroke-width="3"/>
+  <rect x="24" y="52" width="26" height="24" rx="3" fill="#6fa8ff" opacity=".55"/>
+  <rect x="80" y="59" width="30" height="10" rx="3" fill="#f0f2f6" stroke="#16171a" stroke-width="2"/>
+  <rect x="106" y="54" width="8" height="20" rx="2" fill="#16171a"/>
+  <circle cx="30" cy="40" r="4" fill="#3fd57f"/>
+  <circle cx="70" cy="40" r="4" fill="#3fd57f"/>
+  <rect x="26" y="86" width="12" height="7" rx="2" fill="#f47b2a"/>
+  <rect x="62" y="86" width="12" height="7" rx="2" fill="#f47b2a" opacity=".4"/>
+</svg>

@@ -1,0 +1,25 @@
+{
+  "viewBox": "0 0 580 78",
+  "eje_y": 40,
+  "cara_trasera_x": 8,
+  "cara_delantera_x": 302,
+  "carrera_mm": 200,
+  "tubo_x": [
+    34,
+    276
+  ],
+  "ranura_sensores_y": [
+    20.7,
+    59.3
+  ],
+  "sensor_SC": {
+    "x": 50,
+    "y": 59.3
+  },
+  "sensor_SE": {
+    "x": 250,
+    "y": 59.3
+  },
+  "piston_retraido_x": 39,
+  "extremo_vastago_retraido_x": 354
+}

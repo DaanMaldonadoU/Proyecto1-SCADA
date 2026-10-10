@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sistema de diseño · HMI estación electroneumática</title>
+<style>
+@font-face{font-family:Inter;src:url(../fuentes/Inter-Regular.ttf);font-weight:400}
+@font-face{font-family:Inter;src:url(../fuentes/Inter-Medium.ttf);font-weight:500}
+@font-face{font-family:Inter;src:url(../fuentes/Inter-SemiBold.ttf);font-weight:600}
+@font-face{font-family:Inter;src:url(../fuentes/Inter-Bold.ttf);font-weight:700}
+:root{--fondo:#0F1319;--surface:#171C24;--surface2:#1F2630;--borde:#2C3542;--texto:#E6EAF0;--suave:#8B96A5;--oro:#C9A227;--azulunam:#1B3A6B;--aire:#3D8BFF;--ok:#2ECC71;--activo:#FFB000;--alarma:#FF4D4F;--neutro:#7B8794}
+*{box-sizing:border-box} body{margin:0;background:var(--fondo);color:var(--texto);font:14px/1.45 Inter,"Segoe UI",Roboto,sans-serif}
+header{height:72px;background:var(--surface);border-bottom:1px solid var(--borde);border-left:4px solid var(--oro);display:flex;align-items:center;gap:16px;padding:0 20px}
+header img{height:52px;opacity:.92} header h1{font-size:22px;font-weight:600;margin:0} header small{display:block;color:var(--suave);font-size:12px}
+.chip{margin-left:auto;padding:4px 12px;border-radius:999px;font-weight:700;font-size:12px;letter-spacing:1px;border:1px solid var(--activo);color:var(--activo);background:rgba(255,176,0,.16)}
+main{max-width:1240px;margin:0 auto;padding:24px;display:grid;gap:20px;grid-template-columns:repeat(12,1fr)}
+.panel{background:var(--surface);border:1px solid var(--borde);border-radius:12px;padding:16px}
+.panel h2{margin:0 0 12px;font-size:14px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--suave);display:flex;gap:8px;align-items:center}
+.panel h2 img{width:18px;height:18px}
+.c12{grid-column:span 12}.c6{grid-column:span 6}.c4{grid-column:span 4}.c8{grid-column:span 8}.c3{grid-column:span 3}
+.sw{display:flex;gap:10px;flex-wrap:wrap}.sw div{width:96px;height:64px;border-radius:8px;padding:6px;font-size:11px;display:flex;flex-direction:column;justify-content:flex-end;border:1px solid var(--borde)}
+.btns{display:flex;gap:22px;align-items:flex-end;flex-wrap:wrap}.btn{width:96px;text-align:center;font-size:12px;font-weight:500;letter-spacing:.8px;cursor:pointer;user-select:none}
+.btn img{width:96px;height:96px;display:block;transition:transform .12s}.btn:active img{transform:scale(.97)}
+.leds{display:flex;gap:18px;flex-wrap:wrap;align-items:center}.leds span{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--suave)}.leds img{width:22px}
+.icons{display:flex;gap:14px;flex-wrap:wrap}.icons img{width:24px;height:24px}
+.etapas{display:flex;gap:10px;flex-wrap:wrap}
+.etapa{width:150px;height:44px;border-radius:6px;background:var(--surface2);border:1px solid var(--borde);position:relative;display:flex;align-items:center;gap:8px;padding:6px;color:var(--suave);font-size:12px}
+.etapa b{width:32px;height:32px;border-radius:4px;background:var(--borde);display:grid;place-items:center;color:var(--texto);font-size:13px}
+.etapa.on{border:2px solid var(--activo);background:rgba(255,176,0,.14);color:var(--texto);font-weight:600}.etapa.on b{background:var(--activo);color:#111417}
+.etapa .bar{position:absolute;left:2px;right:2px;bottom:2px;height:3px;border-radius:2px;background:rgba(255,255,255,.06)}.etapa .bar i{display:block;height:100%;width:62%;border-radius:2px;background:var(--activo)}
+.flat{display:inline-flex;align-items:center;justify-content:center;height:38px;padding:0 18px;border-radius:8px;background:var(--surface2);border:1px solid var(--borde);font-weight:500;cursor:pointer;margin-right:10px}
+.flat.p{background:var(--aire);border-color:#5f9fff}.flat:hover{filter:brightness(1.08)}
+.valor{font-size:28px;font-weight:600;font-variant-numeric:tabular-nums}
+.wire{display:grid;grid-template-columns:repeat(12,1fr);grid-auto-rows:54px;gap:8px}
+.wire div{background:var(--surface2);border:1px dashed var(--borde);border-radius:8px;font-size:11px;color:var(--suave);padding:6px}
+.wire .w-sin{grid-column:span 8;grid-row:span 5}.wire .w-gr{grid-column:span 4;grid-row:span 5}.wire .w-man{grid-column:span 3;grid-row:span 3}.wire .w-par{grid-column:span 3;grid-row:span 3}.wire .w-gan{grid-column:span 6;grid-row:span 3}.wire .w-io{grid-column:span 4;grid-row:span 2}.wire .w-log{grid-column:span 5;grid-row:span 2}.wire .w-lat{grid-column:span 3;grid-row:span 2}
+.ring{width:120px;height:120px;border-radius:50%;background:conic-gradient(var(--aire) 0 66%,var(--borde) 66% 100%);display:grid;place-items:center}.ring div{width:102px;height:102px;border-radius:50%;background:var(--surface);display:grid;place-items:center;text-align:center}.ring b{font-size:22px;display:block}.ring small{font-size:11px;color:var(--suave);letter-spacing:.8px}
+</style></head>
+<body>
+<header>
+  <img src="../logos/unam_blanco.png" alt="UNAM"><img src="../logos/fi_blanco.png" alt="Facultad de Ingeniería">
+  <div><h1>Estación electroneumática · SLC 5/04</h1><small>Laboratorio de Control y Automatización · Facultad de Ingeniería, UNAM</small></div>
+  <span class="chip">EMULATE</span>
+</header>
+<main>
+  <section class="panel c12"><h2><img src="iconos/ajustes_claro.svg">Distribución de la pantalla (1920×1080, rejilla de 12 columnas)</h2>
+    <div class="wire">
+      <div class="w-sin">SINÓPTICO · 1A, 2A, 3A (zona PLC) arriba · 4A, 5A (cadena neumática) abajo · cámaras teñidas de azul al presurizar · bobinas EV y sensores SC/SE con LED</div>
+      <div class="w-gr">GRAFCET · X0…X8 en columna, etapa activa en ámbar, barra del TON de la etapa, receptividad de la transición pendiente</div>
+      <div class="w-man">MANDOS · START / STOP / RESET (botones industriales) · anillo de confirmación al recibir ACTIVE/END</div>
+      <div class="w-par">PARÁMETROS · T_ESPERA, T_NEUM, N_CICLOS con deslizador + valor · check al confirmar T4:n.PRE</div>
+      <div class="w-gan">CRONOGRAMA · Gantt en vivo de etapas por ciclo · anillo C5:0.ACC / PRE</div>
+      <div class="w-io">MONITOR E/S · I:1.0 y O:2.0 bit a bit</div>
+      <div class="w-log">REGISTRO · eventos con hora, calidad, escrituras</div>
+      <div class="w-lat">LATENCIA OPC · tendencia ms por lectura</div>
+    </div></section>
+
+  <section class="panel c6"><h2>Colores</h2><div class="sw">
+    <div style="background:#0F1319">fondo #0F1319</div><div style="background:#171C24">surface #171C24</div><div style="background:#1F2630">surface2 #1F2630</div><div style="background:#2C3542">borde #2C3542</div>
+    <div style="background:#1B3A6B">unamAzul #1B3A6B</div><div style="background:#C9A227;color:#111">unamOro #C9A227</div>
+    <div style="background:#3D8BFF;color:#111">aire #3D8BFF</div><div style="background:#2ECC71;color:#111">ok #2ECC71</div><div style="background:#FFB000;color:#111">activo #FFB000</div><div style="background:#FF4D4F;color:#111">alarma #FF4D4F</div><div style="background:#7B8794;color:#111">neutro #7B8794</div>
+  </div><p style="color:var(--suave);font-size:12px;margin:12px 0 0">Regla ISA‑101: en reposo todo es gris; el color aparece sólo para indicar estado. Ámbar = activo/energizado, verde = OK/confirmado, rojo = paro/alarma, azul = aire.</p></section>
+
+  <section class="panel c6"><h2>Tipografía · Inter (OFL, en /fuentes)</h2>
+    <div style="font-size:22px;font-weight:600">Título 22 / 600</div>
+    <div style="font-size:14px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--suave)">Sección 14 / 600 / mayúsculas</div>
+    <div style="font-size:14px">Cuerpo 14 / 400 — Preajuste escrito en T4:0.PRE … T4:4.PRE</div>
+    <div style="font-size:12px;font-weight:500;color:var(--suave)">Etiqueta 12 / 500</div>
+    <div class="valor">1.00 s <span style="font-size:12px;color:var(--suave);font-weight:500">valor 28 / 600 · dígitos tabulares</span></div>
+  </section>
+
+  <section class="panel c8"><h2>Botones industriales · normal / hover / pulsado / deshabilitado</h2>
+    <div class="btns" id="btns"></div>
+    <p style="margin:14px 0 0"><span class="flat p">Conectar</span><span class="flat">Aceptar</span><span class="flat">Mapeo…</span><span class="flat" style="opacity:.5">Deshabilitado</span></p>
+  </section>
+
+  <section class="panel c4"><h2>Anillo de progreso</h2><div class="ring"><div><b>2 / 3</b><small>CICLOS</small></div></div></section>
+
+  <section class="panel c6"><h2>LEDs</h2><div class="leds" id="leds"></div></section>
+  <section class="panel c6"><h2>Iconos (línea, 24 px, 3 colores)</h2><div class="icons" id="icons"></div></section>
+
+  <section class="panel c12"><h2><img src="iconos/grafcet_claro.svg">Etapas del GRAFCET</h2><div class="etapas">
+    <div class="etapa"><b>X0</b>Reposo</div><div class="etapa"><b>X1</b>1A+</div><div class="etapa on"><b>X2</b>Espera 1A afuera<span class="bar"><i></i></span></div><div class="etapa"><b>X3</b>1A− · espera</div><div class="etapa"><b>X4</b>2A+ · espera</div><div class="etapa"><b>X5</b>2A− · espera</div><div class="etapa"><b>X6</b>3A+ · espera</div><div class="etapa"><b>X7</b>Ventana 4A/5A</div><div class="etapa"><b>X8</b>END</div>
+  </div></section>
+</main>
+<script>
+const b=document.getElementById('btns');
+for(const k of ['start','stop','reset','power']) for(const s of ['normal','hover','pressed','disabled']){const d=document.createElement('div');d.className='btn';d.innerHTML=`<img src="botones/${k}_${s}.svg">${k.toUpperCase()}<br><span style="color:var(--suave)">${s}</span>`;b.appendChild(d)}
+const l=document.getElementById('leds');
+for(const c of ['ok','activo','alarma','aire','neutro']) for(const o of ['on','off']){const s=document.createElement('span');s.innerHTML=`<img src="leds/${c}_${o}.svg">${c} ${o}`;l.appendChild(s)}
+const ic=document.getElementById('icons');
+for(const n of ['conexion','desconectado','alarma','ajustes','reloj','contador','io','registro','plc','aire','latencia','grafcet','cilindro','cerrar','check','expandir','camara','vm']){const i=document.createElement('img');i.src=`iconos/${n}_claro.svg`;i.title=n;ic.appendChild(i)}
+</script>
+</body></html>

@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Configuración local generada por el HMI (mapeo viejo, no versionar)
+tags_plc.json
+
+# Historial / alarmas / logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+
+# Editores y SO
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.swp
+# Preferencias locales de Qt Design Studio / Qt Creator (ui/qml/HMI.qmlproject)
+*.qmlproject.qtds
+*.qmlproject.user
+*.autosave
+
+# Datos de ejecución (calibración de carreras, historial SQLite)
+datos/
+
+# Entornos virtuales adicionales (pruebas PyQt5, etc.)
+.venv*/
+
+# Copias de otras máquinas para comparar (p. ej. la versión del laboratorio, sesión 10)
+cambios/
+
+# Guía técnica en LaTeX (sesión 15, 9 MB): se queda solo en esta PC, no se sube a GitHub (pedido del autor,
+# sesión 14). Su historial está en la rama local respaldo/con-guia-tecnica (nunca se publica).
+docs/documentacion_tecnica/

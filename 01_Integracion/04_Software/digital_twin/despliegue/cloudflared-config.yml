@@ -1,0 +1,22 @@
+# cloudflared-config.yml — opción B de mds/DESPLIEGUE_SERVIDOR.md §3: publicar por Cloudflare Tunnel
+# (sin IP pública ni puertos abiertos). Un mismo túnel lleva los dos nombres; se añade una regla de
+# ingress por servicio. Copiar a %USERPROFILE%\.cloudflared\config.yml y ajustar tunnel y credentials-file.
+#
+#   cloudflared tunnel login
+#   cloudflared tunnel create smartsensorslab
+#   cloudflared tunnel route dns smartsensorslab digitaltwinscada.smartsensorslab.com
+#   cloudflared tunnel route dns smartsensorslab broker.smartsensorslab.com
+#   cloudflared tunnel run smartsensorslab          (o: cloudflared service install)
+#
+# Por el túnel solo pasa HTTP/WebSocket: el puente del laboratorio usa MQTT sobre WebSocket
+# (mqtt+wss://puente:CLAVE@broker.smartsensorslab.com); el MQTT crudo 8883 no pasa por Cloudflare.
+
+tunnel: smartsensorslab
+credentials-file: C:\Users\<usuario>\.cloudflared\<UUID>.json
+
+ingress:
+  - hostname: digitaltwinscada.smartsensorslab.com
+    service: http://127.0.0.1:3002
+  - hostname: broker.smartsensorslab.com
+    service: http://127.0.0.1:9001
+  - service: http_status:404

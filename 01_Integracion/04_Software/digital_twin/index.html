@@ -1,0 +1,1175 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1c2438">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/estatico/manifest.webmanifest">
+<link rel="icon" href="/estatico/icono.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/estatico/icono.svg">
+<title>Gemelo digital · Estación electroneumática</title>
+<!--
+  Frontend del gemelo digital (escena 3D del tablero neumático + tablero de mando web).
+  Lo sirve digital_twin/servidor_web en "/" y habla con él según mds/ENLACE_WEB.md:
+    * sesión con cookie (POST /api/login, GET /api/yo, POST /api/logout),
+    * WebSocket /ws/web: bienvenida, snap, evt, planta, presencia, actividad, resultado, yo, pong,
+    * órdenes {"tipo":"orden","ref":n,"cmd":{...}} filtradas por permisos y por el mando (core/mando.py).
+  Solo se mueven los cilindros que existen en el PLC de este proyecto (docs/TABLA_DE_VARIABLES.md sección 1):
+    1A, 2A, 3A con `snap.s.pos` y sus bits SC/SE/EV_E/EV_C; 4A y 5A con `snap.s.pos_neum` (cadena
+    neumática sin sensores en el PLC: posición estimada). 1B–3B y 4B–5B están en el tablero real pero
+    no en este proyecto: se dibujan quietos.
+  Modo suave del puente (bloque `suave` del snapshot): 1A/2A/3A siguen la velocidad y el extremo previstos
+  entre snapshots (clase Seguidor), y la etapa, el ACC y el tiempo de etapa mostrados son los previstos.
+  Movimiento suave: cada posición recibida entra en un búfer y se interpola linealmente con un pequeño
+  retraso (≈1,5 periodos de muestreo), así el vástago no da saltos aunque los snapshots lleguen con jitter.
+  three.js r128 se carga de /estatico/three.min.js (sirve sin internet) y, si falta, del CDN.
+  Móvil (≤ 900 px o puntero táctil): el tablero de mando se muestra por pestañas (una tarjeta a la vez), la tira
+  inferior se compacta, la cámara abre el ángulo en vertical y la escena baja la resolución y las sombras.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --sky0:#3b4c73; --sky1:#1c2438;
+    --panel:rgba(16,21,34,.80); --panel-line:rgba(255,255,255,.10);
+    --ink:#eef1f6; --ink-2:#a2abbf; --ink-3:#6a7389;
+    --orange:#f47b2a; --green:#3fd57f; --red:#e23b2e; --yellow:#f2c230; --steel:#c9cdd5; --blue:#6fa8ff;
+    --btn:rgba(255,255,255,.06); --btn-hover:rgba(255,255,255,.12);
+    --radius:10px;
+    --font:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      --panel:rgba(244,246,250,.88); --panel-line:rgba(0,0,0,.10);
+      --ink:#151a26; --ink-2:#4a536a; --ink-3:#7c8499;
+      --btn:rgba(0,0,0,.05); --btn-hover:rgba(0,0,0,.10);
+    }
+  }
+  :root[data-theme="dark"]{
+    --panel:rgba(16,21,34,.80); --panel-line:rgba(255,255,255,.10);
+    --ink:#eef1f6; --ink-2:#a2abbf; --ink-3:#6a7389;
+    --btn:rgba(255,255,255,.06); --btn-hover:rgba(255,255,255,.12);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    font-family:var(--font); color:var(--ink);
+    background:radial-gradient(120% 90% at 50% 0%, var(--sky0) 0%, var(--sky1) 70%, #10151f 100%);
+    overflow:hidden; -webkit-font-smoothing:antialiased;
+  }
+  canvas#scene{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;outline:none}
+  [hidden]{display:none !important}
+
+  /* ---------- barra superior ---------- */
+  .topbar{
+    position:fixed;top:0;left:0;right:0;min-height:56px;z-index:5;
+    display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding:10px 16px;
+    background:linear-gradient(180deg,rgba(10,14,24,.55),rgba(10,14,24,0));
+    pointer-events:none;
+  }
+  .topbar > *{pointer-events:auto}
+  .brand{display:flex;flex-direction:column;gap:2px;color:#eef1f6;min-width:0}
+  .brand h1{font-size:15px;font-weight:600;margin:0;letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46vw}
+  .brand span{font-size:11.5px;color:#aab3c8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46vw}
+  .spacer{flex:1}
+  .pill{
+    display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px 0 10px;border-radius:999px;
+    background:var(--panel);border:1px solid var(--panel-line);font-size:12.5px;color:var(--ink);
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);white-space:nowrap;
+  }
+  .pill.mono{font-family:var(--mono);font-size:11.5px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--ink-3);box-shadow:0 0 0 0 transparent;transition:background .2s,box-shadow .2s;flex:none}
+  .dot.sim{background:var(--yellow)} .dot.on{background:var(--green);box-shadow:0 0 10px var(--green)} .dot.err{background:var(--red)}
+  .iconbtn{
+    height:32px;padding:0 12px;border-radius:999px;border:1px solid var(--panel-line);background:var(--panel);
+    color:var(--ink);font:inherit;font-size:12.5px;cursor:pointer;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);white-space:nowrap;
+  }
+  .iconbtn:hover{background:var(--btn-hover)}
+  .iconbtn[aria-pressed="false"]{opacity:.6}
+  .iconbtn:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+
+  /* ---------- banda de alarmas ---------- */
+  .banda{
+    position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:6;max-width:min(900px,calc(100% - 28px));
+    background:rgba(226,59,46,.22);border:1px solid rgba(226,59,46,.7);color:#ffd9d5;border-radius:999px;
+    padding:6px 16px;font-size:12.5px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    animation:latido 1.6s ease-in-out infinite;
+  }
+  @keyframes latido{0%,100%{box-shadow:0 0 0 0 rgba(226,59,46,.0)}50%{box-shadow:0 0 18px 2px rgba(226,59,46,.45)}}
+
+  /* ---------- tablero lateral ---------- */
+  .dock{
+    position:fixed;top:64px;left:14px;bottom:110px;width:320px;z-index:4;
+    display:flex;flex-direction:column;gap:10px;overflow:auto;padding-right:4px;
+    scrollbar-width:thin;
+  }
+  .card{
+    background:var(--panel);border:1px solid var(--panel-line);border-radius:var(--radius);
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);padding:12px 12px 10px;flex:none;
+  }
+  .card h2{font-size:13px;font-weight:600;margin:0 0 8px;color:var(--ink);display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .card h2 small{font-weight:400;color:var(--ink-2);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tag{font-family:var(--mono);font-size:13px;font-weight:600}
+  .sig{
+    font-family:var(--mono);font-size:11.5px;height:30px;border-radius:7px;border:1px solid var(--panel-line);
+    background:var(--btn);color:var(--ink);cursor:pointer;user-select:none;-webkit-user-select:none;
+    display:flex;align-items:center;justify-content:center;gap:6px;transition:background .12s,box-shadow .12s;padding:0 8px;
+  }
+  .sig:hover{background:var(--btn-hover)}
+  .sig.active{background:rgba(244,123,42,.22);border-color:rgba(244,123,42,.6);box-shadow:inset 0 0 0 1px rgba(244,123,42,.35)}
+  .sig[disabled]{opacity:.4;cursor:not-allowed}
+  .sig.start{border-color:rgba(63,213,127,.55)} .sig.start.active{background:rgba(63,213,127,.22);border-color:var(--green)}
+  .sig.stop{border-color:rgba(226,59,46,.55)} .sig.stop.active{background:rgba(226,59,46,.28);border-color:var(--red)}
+  .sig.reset{border-color:rgba(111,168,255,.55)} .sig.reset.active{background:rgba(111,168,255,.22);border-color:var(--blue)}
+  .ctl{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .ctl3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+  .ctl .sig,.ctl3 .sig{height:36px}
+  .leds{display:flex;gap:4px;align-items:center}
+  .led{width:9px;height:9px;border-radius:50%;background:rgba(127,127,127,.35);transition:background .12s,box-shadow .12s;flex:none}
+  .led.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+  .led.mem{width:7px;height:7px;border-radius:2px}
+  .led.mem.on{background:var(--orange);box-shadow:0 0 6px var(--orange)}
+  .led.rojo.on{background:var(--red);box-shadow:0 0 8px var(--red)}
+  .hint{font-size:11.5px;color:var(--ink-2);margin:6px 0 0;line-height:1.4}
+  .ok{color:var(--green)} .aviso{color:var(--yellow)} .alarma{color:#ff8a80} .tenue{color:var(--ink-2)}
+  .estado{font-size:12px;line-height:1.45;margin:0 0 8px;min-height:18px}
+  .estado b{font-weight:600}
+
+  /* GRAFCET */
+  .etapas{display:grid;grid-template-columns:repeat(9,1fr);gap:4px}
+  .etapas span{font-family:var(--mono);font-size:11px;text-align:center;padding:5px 0;border:1px solid var(--panel-line);border-radius:6px;color:var(--ink-3);background:var(--btn)}
+  .etapas span.on{color:#111;background:var(--orange);border-color:var(--orange);font-weight:600}
+  .etapas span.fin{color:#111;background:var(--green);border-color:var(--green)}
+  .track{position:relative;height:10px;margin-top:8px;border-radius:5px;background:var(--btn);overflow:hidden}
+  .fill{position:absolute;inset:0 auto 0 0;width:0%;background:linear-gradient(90deg,#c9cdd5,#f0f2f5);border-radius:5px}
+  .fill.pneu{background:linear-gradient(90deg,#e0641c,#f8a25b)}
+  .fill.ton{background:linear-gradient(90deg,#4f7fd6,#6fa8ff)}
+  .kv{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font-size:12px;color:var(--ink-2);margin-top:6px}
+  .kv b{font-family:var(--mono);font-weight:500;color:var(--ink);text-align:right}
+
+  /* parámetros */
+  .param{display:grid;grid-template-columns:78px 1fr auto;gap:6px;align-items:center;padding:4px 0;border-top:1px solid var(--panel-line)}
+  .param:first-of-type{border-top:0}
+  .param .tag{font-size:12px}
+  .param small{display:block;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);font-weight:400}
+  .param input{width:100%;height:30px;border-radius:7px;border:1px solid var(--panel-line);background:var(--btn);color:var(--ink);font:12.5px var(--mono);padding:0 8px}
+  .param .sig{height:30px;padding:0 10px}
+
+  /* señales */
+  .senales{display:grid;grid-template-columns:34px repeat(4,1fr);gap:4px 6px;align-items:center;font-family:var(--mono);font-size:11px;color:var(--ink-2)}
+  .senales .cab{color:var(--ink-3);font-size:10.5px;text-align:center}
+  .senales .cel{display:flex;align-items:center;justify-content:center;gap:4px}
+  .senales .tag{font-size:12px}
+  .fila{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;margin-top:8px;font-family:var(--mono);font-size:11px;color:var(--ink-2)}
+  .fila span{display:inline-flex;align-items:center;gap:5px}
+
+  /* registros */
+  .log{font-family:var(--mono);font-size:10.5px;color:var(--ink-2);max-height:150px;overflow:auto;padding:6px 8px;border-radius:7px;background:rgba(0,0,0,.25);line-height:1.45}
+  .log div{padding:2px 0;border-bottom:1px solid rgba(255,255,255,.05);overflow-wrap:anywhere}
+  .log b{color:var(--ink);font-weight:600}
+  .log.corto{max-height:96px}
+
+  /* ---------- tira inferior ---------- */
+  .strip{
+    position:fixed;left:14px;right:14px;bottom:14px;z-index:4;
+    display:grid;grid-template-columns:repeat(5,1fr);gap:8px;
+  }
+  .bar{
+    background:var(--panel);border:1px solid var(--panel-line);border-radius:var(--radius);padding:8px 10px;min-width:0;
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  }
+  .bar .head{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:var(--ink-2)}
+  .bar .head .tag{color:var(--ink)}
+  .bar .val{font-family:var(--mono);font-size:12px;color:var(--ink)}
+  .ends{display:flex;justify-content:space-between;margin-top:6px;font-family:var(--mono);font-size:11px;color:var(--ink-2)}
+  .ends span{display:flex;align-items:center;gap:5px}
+  .ends .est{color:var(--ink-3);font-style:italic}
+
+  /* ---------- cajón derecho (cuentas y auditoría) ---------- */
+  .drawer{
+    position:fixed;top:64px;right:14px;width:380px;max-height:calc(100% - 190px);overflow:auto;z-index:6;display:none;
+    background:var(--panel);border:1px solid var(--panel-line);border-radius:var(--radius);padding:14px;
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  }
+  .drawer.open{display:block}
+  .drawer h2{font-size:13px;margin:0 0 8px}
+  .drawer h2 + .fila{margin-top:0}
+  .drawer input,.drawer select{height:30px;border-radius:7px;border:1px solid var(--panel-line);background:var(--btn);color:var(--ink);font:12.5px var(--mono);padding:0 8px}
+  .drawer select option{color:#111}
+  .drawer table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+  .drawer td,.drawer th{text-align:left;padding:4px 4px;border-bottom:1px solid var(--panel-line)}
+  .drawer th{color:var(--ink-3);font-weight:500;font-size:11px}
+  .drawer .sig{height:28px}
+
+  /* ---------- inicio de sesión ---------- */
+  .login{position:fixed;inset:0;z-index:8;display:flex;align-items:center;justify-content:center;background:rgba(8,11,18,.45);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+  .login .card{width:340px;max-width:calc(100% - 28px);padding:18px}
+  .login h2{font-size:15px;margin:0 0 2px}
+  .login p{font-size:12px;color:var(--ink-2);margin:0 0 12px;line-height:1.45}
+  .login input{width:100%;height:34px;border-radius:7px;border:1px solid var(--panel-line);background:var(--btn);color:var(--ink);font:13px var(--font);padding:0 10px;margin-bottom:8px}
+  .login .sig{width:100%;height:36px;font-family:var(--font);font-size:13px}
+  .login .msg{min-height:18px;font-size:12px;margin-top:8px}
+
+  .credits{position:fixed;right:14px;bottom:100px;z-index:3;text-align:right;font-size:10.5px;line-height:1.5;color:rgba(238,241,246,.62);pointer-events:none;max-width:52vw}
+
+  .toast{
+    position:fixed;left:50%;bottom:150px;transform:translateX(-50%);z-index:7;
+    background:var(--panel);border:1px solid var(--panel-line);border-radius:999px;padding:8px 14px;font-size:12.5px;
+    opacity:0;transition:opacity .2s;pointer-events:none;backdrop-filter:blur(10px);max-width:calc(100% - 28px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .toast.show{opacity:1}
+  .toast.ok{border-color:rgba(63,213,127,.6)} .toast.mal{border-color:rgba(226,59,46,.7)}
+
+  @media (prefers-reduced-motion: reduce){ *{transition:none!important;animation:none!important} }
+
+  /* ---------- pestañas del tablero (solo en pantallas angostas) y modo "solo 3D" ---------- */
+  .tabs{display:none;flex:none;gap:4px;overflow-x:auto;padding:4px;border-radius:var(--radius);background:var(--panel);border:1px solid var(--panel-line);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);scrollbar-width:none}
+  .tabs::-webkit-scrollbar{display:none}
+  .tabs button{flex:none;height:32px;padding:0 12px;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--ink-2);font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap}
+  .tabs button[aria-selected="true"]{background:var(--btn-hover);color:var(--ink);border-color:var(--panel-line);font-weight:600}
+  body.solo3d .dock,body.solo3d .strip,body.solo3d .credits{display:none}
+
+  @media (max-width:900px){
+    .topbar{padding:8px 10px;gap:6px}
+    .brand h1{font-size:13px;max-width:62vw}
+    .brand span{display:none}
+    .pill,.iconbtn{height:30px;font-size:11.5px;padding:0 10px}
+    .pill.mono{font-size:10.5px}
+    #btnView,#btnLabels{display:none}
+    .banda{top:52px;font-size:11.5px}
+    .dock{left:10px;right:10px;width:auto;top:auto;bottom:calc(76px + env(safe-area-inset-bottom));max-height:46vh;overflow:hidden;gap:6px;padding:0}
+    .dock .card{display:none;overflow:auto;min-height:0}
+    .dock .card.activa{display:block}
+    .tabs{display:flex}
+    .etapas{gap:3px} .etapas span{font-size:10px;padding:4px 0}
+    .log{max-height:30vh}
+    .strip{left:10px;right:10px;bottom:calc(8px + env(safe-area-inset-bottom));grid-template-columns:repeat(5,minmax(0,1fr));gap:5px}
+    .bar{padding:6px 7px}
+    .bar .head{font-size:11px} .bar .val{font-size:10.5px}
+    .bar .track{height:7px;margin-top:5px}
+    .bar .ends{display:none}
+    .drawer{left:10px;right:10px;width:auto;top:52px;max-height:calc(100% - 140px)}
+    .credits{display:none}
+    .toast{bottom:calc(46vh + 96px + env(safe-area-inset-bottom))}
+  }
+</style>
+</head>
+<body>
+<canvas id="scene" tabindex="0" aria-label="Vista 3D del tablero neumático"></canvas>
+
+<header class="topbar">
+  <div class="brand"><h1 id="brandTitle">Gemelo digital · Control y Supervisión de Sistema Secuencial Electroneumático</h1><span id="brandSub">Estación electroneumática · SLC 5/04 · OPC DA</span></div>
+  <div class="spacer"></div>
+  <div class="pill" id="pillPlanta" title="Estado del enlace con la planta"><span class="dot" id="dotPlanta"></span><span id="txtPlanta">Conectando…</span></div>
+  <div class="pill mono" id="pillLat" title="Latencias: lectura del PLC en el gateway · puente ⇄ servidor (ida y vuelta) · servidor ⇄ este navegador (ida y vuelta)">lat —</div>
+  <div class="pill" id="pillYo" hidden><span class="dot" id="dotYo"></span><span id="txtYo">—</span></div>
+  <button class="iconbtn" id="btnPanel" aria-pressed="true" title="Mostrar u ocultar el tablero de mando">Panel</button>
+  <button class="iconbtn" id="btnView" title="Volver a la vista inicial">Vista</button>
+  <button class="iconbtn" id="btnLabels" aria-pressed="true">Etiquetas</button>
+  <button class="iconbtn" id="btnCuentas" hidden>Cuentas y auditoría</button>
+  <button class="iconbtn" id="btnEntrar" hidden>Iniciar sesión</button>
+  <button class="iconbtn" id="btnSalir" hidden>Salir</button>
+</header>
+<div class="banda" id="banda" hidden></div>
+
+<aside class="dock" id="dock">
+  <nav class="tabs" id="tabs" aria-label="Secciones del tablero">
+    <button data-tab="cardMando" aria-selected="true">Mando</button>
+    <button data-tab="cardGrafcet" aria-selected="false">GRAFCET</button>
+    <button data-tab="cardParams" aria-selected="false">Parámetros</button>
+    <button data-tab="cardSenales" aria-selected="false">Señales</button>
+    <button data-tab="cardLinea" aria-selected="false">En línea</button>
+    <button data-tab="cardActividad" aria-selected="false">Actividad</button>
+    <button data-tab="cardEventos" aria-selected="false">Eventos</button>
+  </nav>
+  <section class="card activa" id="cardMando">
+    <h2>Mando <small id="mandoRemoto">—</small></h2>
+    <p class="estado" id="mandoEstado">—</p>
+    <div class="ctl">
+      <button class="sig" id="btnPedir" disabled>Pedir mando</button>
+      <button class="sig" id="btnLiberar" disabled>Liberar mando</button>
+    </div>
+    <div class="ctl3" style="margin-top:6px">
+      <button class="sig start" id="btnStart" data-pulso="STARTV" disabled>START</button>
+      <button class="sig stop" id="btnStop" data-pulso="STOPV" disabled>STOP</button>
+      <button class="sig reset" id="btnReset" data-pulso="RESETV" disabled>RESET</button>
+    </div>
+    <p class="hint" id="mandoRes">Los pulsos (300 ms) van a STARTV / STOPV / RESETV del PLC. STOP nunca necesita el mando.</p>
+  </section>
+
+  <section class="card" id="cardGrafcet">
+    <h2>Secuencia (GRAFCET) <small id="grafcetSub">—</small></h2>
+    <div class="etapas" id="etapas"></div>
+    <p class="estado" id="etapaTexto" style="margin-top:8px">—</p>
+    <div class="track"><div class="fill ton" id="tonFill"></div></div>
+    <div class="kv">
+      <span>Temporizador de la etapa</span><b id="tonTexto">—</b>
+      <span>Tiempo en la etapa</span><b id="tEtapa">—</b>
+      <span>Ciclos completados</span><b id="ciclos">—</b>
+      <span>Fines de secuencia (END)</span><b id="fines">—</b>
+    </div>
+  </section>
+
+  <section class="card" id="cardParams">
+    <h2>Parámetros <small>centésimas → segundos</small></h2>
+    <div class="param"><span class="tag">T_ESPERA<small id="vTesp">T4:0…4.PRE = —</small></span><input id="pTesp" type="number" inputmode="decimal" min="0" max="327.67" step="0.01" placeholder="s"><button class="sig" id="wTesp" data-tag="T_ESPERA" disabled>Escribir</button></div>
+    <div class="param"><span class="tag">T_NEUM<small id="vTneum">T4:5.PRE = —</small></span><input id="pTneum" type="number" inputmode="decimal" min="0" max="327.67" step="0.01" placeholder="s"><button class="sig" id="wTneum" data-tag="T_NEUM" disabled>Escribir</button></div>
+    <div class="param"><span class="tag">N_CICLOS<small id="vNcic">C5:0.PRE = —</small></span><input id="pNcic" type="number" inputmode="numeric" min="1" max="32767" step="1" placeholder="n"><button class="sig" id="wNcic" data-tag="N_CICLOS" disabled>Escribir</button></div>
+    <p class="hint" id="paramHint">Escribir parámetros requiere rol ingeniero y tener el mando.</p>
+  </section>
+
+  <section class="card" id="cardSenales">
+    <h2>Señales del PLC <small>I:1 · O:2 · B3:0</small></h2>
+    <div class="senales" id="senales"></div>
+    <div class="fila">
+      <span title="Pulsador físico de inicio (NA)"><i class="led" data-bit="START_1"></i>START_1</span>
+      <span title="Pulsador físico de paro (NC: encendido en reposo)"><i class="led" data-bit="STOP_1"></i>STOP_1</span>
+      <span title="Marcha enclavada"><i class="led" data-bit="ACTIVE"></i>ACTIVE</span>
+      <span title="Fin de los N ciclos"><i class="led" data-bit="END"></i>END</span>
+    </div>
+  </section>
+
+  <section class="card" id="cardLinea">
+    <h2>En línea <small id="nLinea">—</small></h2>
+    <div class="log corto" id="conectados"></div>
+  </section>
+
+  <section class="card" id="cardActividad">
+    <h2>Actividad <small>quién · qué · cuándo</small></h2>
+    <div class="log" id="actividad"></div>
+  </section>
+
+  <section class="card" id="cardEventos">
+    <h2>Eventos de la planta</h2>
+    <div class="log" id="eventos"></div>
+  </section>
+</aside>
+
+<footer class="strip" id="strip"></footer>
+<div class="credits" id="credits"></div>
+
+<div class="drawer" id="drawer" role="dialog" aria-label="Cuentas y auditoría">
+  <div id="cuentas" hidden>
+    <h2>Cuentas</h2>
+    <div class="fila">
+      <input id="nu" placeholder="usuario" style="width:100px" autocomplete="off">
+      <input id="nc" type="password" placeholder="contraseña" style="width:110px" autocomplete="new-password">
+      <select id="nr"></select>
+      <button class="sig" id="ncrear">Crear</button>
+    </div>
+    <table id="tusuarios"></table>
+  </div>
+  <div id="auditoria" hidden style="margin-top:12px">
+    <h2>Auditoría <small class="tenue" style="font-weight:400">últimas 100</small></h2>
+    <div class="log" id="auditoriaLog" style="max-height:260px"></div>
+  </div>
+</div>
+
+<div class="login" id="login" hidden>
+  <section class="card">
+    <h2>Gemelo digital</h2>
+    <p id="loginSub">Inicia sesión para ver la estación en vivo. Con rol operador o superior podrás mandar.</p>
+    <input id="lu" placeholder="usuario" autocomplete="username">
+    <input id="lc" type="password" placeholder="contraseña" autocomplete="current-password">
+    <button class="sig start" id="lb">Entrar</button>
+    <div class="msg alarma" id="lmsg"></div>
+  </section>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+'use strict';
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const hora=t=>t?new Date(t*1000).toLocaleTimeString('es-MX',{hour12:false}):'--';
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+
+/* =====================================================================
+   1. MODELO: qué cilindros del tablero existen en el PLC de este proyecto
+   ===================================================================== */
+// Etiquetas tal como están rotuladas en el tablero real. pos3 = [x, y] en cm sobre el tablero.
+// plc: 1A/2A/3A (5/2 biestable, sensores SC/SE en el PLC). neum: 4A/5A (cadena neumática, sin sensores
+// en el PLC: posición estimada por el gateway). libre: en el tablero, pero no en este proyecto.
+const CYL = {
+  '1A': { kind:'plc',   n:1, stroke:18, len:30, r:1.5,  sens:['SC1','SE1'],   pos3:[  4, 91] },
+  '2A': { kind:'plc',   n:2, stroke:18, len:30, r:1.5,  sens:['SC2','SE2'],   pos3:[  4, 83] },
+  '3A': { kind:'plc',   n:3, stroke:18, len:30, r:1.5,  sens:['SC3','SE3'],   pos3:[  4, 75] },
+  '4A': { kind:'neum',  n:4, stroke:10, len:18, r:1.15, sens:['C4A','E4A'],   pos3:[  8, 63] },
+  '5A': { kind:'neum',  n:5, stroke:10, len:18, r:1.15, sens:['C5A','E5A'],   pos3:[ 31, 58] },
+  '5B': { kind:'libre',      stroke:10, len:18, r:1.15, sens:['C5B','E5B'],   pos3:[ 34, 39] },
+  '4B': { kind:'libre',      stroke:10, len:18, r:1.15, sens:['C4B','E4B'],   pos3:[  8, 32] },
+  '1B': { kind:'libre',      stroke:18, len:30, r:1.5,  sens:['SC1B','SE1B'], pos3:[  4, 24] },
+  '2B': { kind:'libre',      stroke:18, len:30, r:1.5,  sens:['SC2B','SE2B'], pos3:[  4, 16] },
+  '3B': { kind:'libre',      stroke:18, len:30, r:1.5,  sens:['SC3B','SE3B'], pos3:[  4,  8] },
+};
+const PLC_TAGS=['1A','2A','3A'], NEUM_TAGS=['4A','5A'], VIVOS=[...PLC_TAGS,...NEUM_TAGS];
+const UPPER_TAGS=['1A','2A','3A','4A','5A'];   // manifold izquierdo (electroválvulas del PLC + pilotaje de 4A/5A)
+const LOWER_TAGS=['1B','2B','3B'];             // manifold inferior derecho (sin PLC en este proyecto)
+const PNEU_TAGS=['4B','5B'];                   // bloque neumático inferior (sin PLC en este proyecto)
+const BOARD={ w:140, h:100, tilt:-0.26 };
+const ETAPAS=['Reposo · retrae 1A/2A/3A','1A+ (EV_E1) · espera SE1','Espera T4:0 con 1A afuera → 1A−','Espera T4:1 con 1A adentro → 2A+',
+  'Espera T4:2 con 2A afuera → 2A−','Espera T4:3 con 2A adentro → 3A+','Espera T4:4 con 3A afuera → 3A−','Ventana T4:5 · cadena 4A/5A · cuenta un ciclo','END · fin de los N ciclos'];
+const TIMER_DE_ETAPA={2:0,3:1,4:2,5:3,6:4,7:5};
+
+/* Interpolador: guarda las dos últimas muestras y devuelve la posición ~1,5 periodos por detrás,
+   interpolando entre ellas. El retraso es lo que da un movimiento continuo aunque el snapshot llegue
+   con jitter; más allá de la última muestra extrapola como mucho 120 ms y luego se queda quieto. */
+class Interp{
+  constructor(){ this.a=null; this.b=null; this.dt=100; this.pos=0; this.vel=0; }
+  push(p,t){ if(this.b){ const d=t-this.b.t; if(d>1&&d<2000) this.dt=this.dt*0.8+d*0.2; } this.a=this.b; this.b={p,t}; }
+  reset(p){ this.a=this.b=null; this.pos=p; this.vel=0; }
+  sample(t){
+    if(!this.b) return this.pos;
+    const tr=t-clamp(this.dt*1.5,40,300); let p;
+    if(this.a && tr<=this.b.t){ const span=this.b.t-this.a.t; const f=span>0?clamp((tr-this.a.t)/span,0,1):1; p=this.a.p+(this.b.p-this.a.p)*f; }
+    else { const v=(this.a&&this.b.t>this.a.t)?(this.b.p-this.a.p)/(this.b.t-this.a.t):0; p=clamp(this.b.p+v*Math.min(Math.max(0,tr-this.b.t),120),0,1); }
+    this.vel=p-this.pos; this.pos=p; return p;
+  }
+}
+/* Seguidor (modo suave del puente, mds/ENLACE_WEB.md §3.3): el snapshot trae la posición prevista `pos`,
+   la velocidad `suave.v` (fracción de carrera por segundo, con signo) y el extremo hacia el que va cada
+   vástago `suave.obj`. Entre snapshots el vástago sigue moviéndose con esa velocidad hasta su extremo,
+   sin esperar al siguiente snapshot ni ir 1,5 periodos por detrás como el Interp; las correcciones de
+   cada snapshot nuevo se absorben en ~60 ms (sin saltos). */
+class Seguidor{
+  constructor(){ this.activo=false; this.p=0; this.v=0; this.obj=0; this.t=0; this.pos=0; this.vel=0; this.tm=null; }
+  push(p,v,obj,t){ if(!this.activo){ this.pos=p; this.tm=null; } this.activo=true; this.p=p; this.v=v; this.obj=obj; this.t=t; }
+  reset(p){ this.p=this.pos=this.obj=p; this.v=0; this.tm=null; }
+  sample(t){
+    const dt=Math.min(2000,Math.max(0,t-this.t))/1000;
+    let pred=this.p+this.v*dt;
+    if(this.v>0) pred=Math.min(pred,this.obj); else if(this.v<0) pred=Math.max(pred,this.obj);
+    pred=clamp(pred,0,1);
+    const h=this.tm==null?1:Math.max(0,(t-this.tm)/1000); this.tm=t;
+    const p=this.pos+(pred-this.pos)*(1-Math.exp(-h/0.06));
+    this.vel=p-this.pos; this.pos=p; return p;
+  }
+}
+for(const tag in CYL){ const c=CYL[tag]; c.interp=new Interp(); c.seg=new Seguidor(); c.pos=0; c.valve=0; c.cmd=false; }
+
+/* =====================================================================
+   2. ESTADO DE RED Y SESIÓN (contrato: mds/ENLACE_WEB.md)
+   ===================================================================== */
+const ST={ yo:null, roles:[], snap:null, enLinea:false, planta:{}, conectados:[], ws:null, ref:0, pend:{},
+           reint:0, tPing:0, rttWeb:null, dirty:true, ultimoSnap:0, cerrando:false };
+let escena=null;   // se rellena en crearEscena() si three.js cargó
+
+async function api(ruta,cuerpo){
+  const r=await fetch(ruta, cuerpo===undefined?{credentials:'same-origin'}:
+    {method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(cuerpo)});
+  let j={}; try{ j=await r.json(); }catch(e){}
+  return Object.assign({status:r.status},j);
+}
+function log(caja,html,max){ const d=document.createElement('div'); d.innerHTML=html; caja.prepend(d); while(caja.children.length>(max||150)) caja.lastChild.remove(); }
+let toastT; function toast(msg,clase){ const t=$('toast'); t.textContent=msg; t.className='toast show '+(clase||''); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),2600); }
+
+async function cargarInstitucion(){
+  try{
+    const r=await api('/api/institucion'); const i=r.institucion; if(!r.ok||!i) return;
+    if(i.proyecto) $('brandTitle').textContent='Gemelo digital · '+i.proyecto;
+    $('brandSub').textContent=[i.universidad,i.facultad,i.materia].filter(Boolean).join(' · ')||$('brandSub').textContent;
+    $('credits').innerHTML=[i.universidad,i.facultad,i.division,i.departamento].filter(Boolean).map(esc).join(' · ')+'<br>'+[i.materia,i.nombre].filter(Boolean).map(esc).join(' · ');
+  }catch(e){ /* servidor sin /api/institucion: se dejan los textos fijos */ }
+}
+// Texto fijo por si el servidor no expone /api/institucion (mismo contenido que mds/data.md).
+$('credits').innerHTML='Universidad Nacional Autónoma de México · Facultad de Ingeniería · División de Ingeniería Eléctrica · Departamento de Control y Robótica<br>Control Distribuido e Integración SCADA · Daan Yael Maldonado Uriostigue';
+
+function mostrarLogin(ver,msg){ $('login').hidden=!ver; $('lmsg').textContent=msg||''; if(ver) setTimeout(()=>$('lu').focus(),50); }
+
+async function iniciar(){
+  cargarInstitucion();
+  const r=await api('/api/yo');
+  if(!r.ok){ mostrarLogin(true); setPlanta(false,'Sin sesión'); return; }
+  ST.yo=r; mostrarLogin(false); pintarYo(); conectar();
+}
+$('lb').onclick=async()=>{
+  $('lb').disabled=true;
+  const r=await api('/api/login',{usuario:$('lu').value.trim(),clave:$('lc').value});
+  $('lb').disabled=false;
+  if(r.ok){ $('lc').value=''; mostrarLogin(false); iniciar(); } else $('lmsg').textContent=r.msg||('error '+r.status);
+};
+$('lc').onkeydown=e=>{ if(e.key==='Enter') $('lb').click(); };
+$('lu').onkeydown=e=>{ if(e.key==='Enter') $('lc').focus(); };
+$('btnEntrar').onclick=()=>mostrarLogin(true);
+$('btnSalir').onclick=async()=>{ ST.cerrando=true; await api('/api/logout',{}); if(ST.ws) ST.ws.close(); location.reload(); };
+
+function pintarYo(){
+  const y=ST.yo; if(!y) return;
+  $('pillYo').hidden=false; $('txtYo').textContent=y.usuario+' · '+y.rol+(y.invitado?' (invitado)':'');
+  $('dotYo').className='dot '+(y.permisos&&y.permisos.mandos?'on':'sim');
+  $('btnEntrar').hidden=!y.invitado; $('btnSalir').hidden=!!y.invitado;
+  const p=y.permisos||{};
+  $('btnCuentas').hidden=!(p.admin||p.auditoria);
+  $('cuentas').hidden=!p.admin; $('auditoria').hidden=!p.auditoria;
+}
+
+function conectar(){
+  if(ST.ws){ try{ ST.ws.close(); }catch(e){} }
+  const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws/web');
+  ST.ws=ws;
+  ws.onopen=()=>{ ST.reint=0; };
+  ws.onmessage=m=>{ let d; try{ d=JSON.parse(m.data); }catch(e){ return; } recibir(d); };
+  ws.onclose=e=>{
+    if(ws!==ST.ws||ST.cerrando) return;
+    ST.ws=null; setPlanta(false,'Sin conexión con el servidor');
+    if(e.code===4001){ location.reload(); return; }             // sesión cerrada por un admin
+    const espera=Math.min(10000,1000*Math.pow(1.6,ST.reint++)); setTimeout(conectar,espera);
+  };
+}
+setInterval(()=>{ if(ST.ws&&ST.ws.readyState===1){ ST.tPing=performance.now(); ST.ws.send(JSON.stringify({tipo:'ping',t:ST.tPing})); } },4000);
+
+function orden(cmd,etiqueta){
+  if(!ST.ws||ST.ws.readyState!==1){ toast('Sin conexión con el servidor','mal'); return; }
+  const ref=++ST.ref; ST.pend[ref]=etiqueta||JSON.stringify(cmd);
+  ST.ws.send(JSON.stringify({tipo:'orden',ref,cmd}));
+}
+
+function recibir(m){
+  switch(m.tipo){
+    case 'bienvenida':
+      ST.yo=m.yo; ST.roles=m.roles||[]; pintarYo();
+      setPlanta(m.planta_en_linea,null,m.planta);
+      $('eventos').innerHTML=''; (m.eventos||[]).forEach(evento);
+      if(m.snap) aplicarSnap(m.snap,true);
+      if(ST.yo.permisos&&ST.yo.permisos.admin) cargarUsuarios();
+      if(ST.yo.permisos&&ST.yo.permisos.auditoria) cargarAuditoria();
+      break;
+    case 'snap': aplicarSnap(m.s,false); break;
+    case 'evt': evento(m.e); break;
+    case 'planta': setPlanta(m.en_linea,null,m.planta); break;
+    case 'presencia': ST.conectados=m.conectados||[]; pintarPresencia(); break;
+    case 'actividad':
+      log($('actividad'),`${hora(m.t)} <b>${esc(m.usuario)}</b> <span class="tenue">(${esc(m.rol)})</span> ${esc(m.detalle)} → <span class="${m.ok?'ok':'alarma'}">${m.ok?'aceptada':'rechazada'}</span> ${esc(m.msg||'')}`);
+      break;
+    case 'resultado':{
+      const et=ST.pend[m.ref]; delete ST.pend[m.ref];
+      const txt=(et?et+': ':'')+(m.ok?'aceptada':'rechazada')+(m.msg?' · '+m.msg:'');
+      toast(txt,m.ok?'ok':'mal'); $('mandoRes').innerHTML=`<span class="${m.ok?'ok':'alarma'}">${m.ok?'✔':'✘'} ${esc(txt)}</span>`;
+      if(m.mando&&ST.snap){ ST.snap.mando=m.mando; ST.dirty=true; }
+      break; }
+    case 'yo': ST.yo=Object.assign({},ST.yo,m); pintarYo(); ST.dirty=true; toast('Tu rol ahora es '+m.rol); break;
+    case 'pong': if(ST.tPing) ST.rttWeb=performance.now()-ST.tPing; break;
+  }
+}
+
+function setPlanta(enLinea,texto,info){
+  ST.enLinea=!!enLinea; if(info) ST.planta=Object.assign({},ST.planta,info);
+  const d=$('dotPlanta'); const s=ST.snap;
+  if(texto){ d.className='dot err'; $('txtPlanta').textContent=texto; }
+  else if(!enLinea){ d.className='dot err'; $('txtPlanta').textContent='Planta fuera de línea (puente desconectado)'; }
+  else { const con=s&&s.conectado; d.className='dot '+(con?'on':'sim'); $('txtPlanta').textContent='Planta en línea · '+(ST.planta.modo||(s&&s.modo)||'—')+(ST.planta.via?' · '+String(ST.planta.via).toUpperCase():'')+(con?'':' · sin lectura del PLC'); }
+  if(escena) escena.setOffline(!enLinea||!(s&&s.conectado));
+  ST.dirty=true;
+}
+
+function evento(e){ if(!e) return; log($('eventos'),`${hora(e.t)} <span class="${e.nivel==='info'?'tenue':e.nivel}">${esc(e.nivel)}</span> ${esc(e.msg)}`); }
+
+function pintarPresencia(){
+  const l=ST.conectados; $('nLinea').textContent=l.length+(l.length===1?' persona':' personas');
+  $('conectados').innerHTML=l.map(u=>`<div><b>${esc(u.usuario)}</b> <span class="tenue">(${esc(u.rol)}) desde ${hora(u.desde)}</span></div>`).join('')||'<div class="tenue">nadie</div>';
+}
+
+/* --- snapshot → modelo ------------------------------------------------ */
+function aplicarSnap(s,inicial){
+  ST.snap=s; ST.dirty=true; ST.ultimoSnap=performance.now();
+  const t=performance.now(), b=s.bits||{};
+  const sv=(s.suave&&Array.isArray(s.suave.v)&&Array.isArray(s.suave.obj))?s.suave:null;   // modo suave del puente
+  if(s.pos) PLC_TAGS.forEach((tag,i)=>{ const c=CYL[tag]; const p=clamp(+s.pos[i]||0,0,1);
+    if(inicial){ c.interp.reset(p); c.seg.reset(p); }
+    if(sv) c.seg.push(p,+sv.v[i]||0,clamp(+sv.obj[i]||0,0,1),t);
+    else { c.seg.activo=false; if(!inicial) c.interp.push(p,t); } });
+  if(s.pos_neum) NEUM_TAGS.forEach((tag,i)=>{ const c=CYL[tag]; const p=clamp(+s.pos_neum[i]||0,0,1); if(inicial) c.interp.reset(p); else c.interp.push(p,t); });
+  for(const tag of PLC_TAGS){ const c=CYL[tag]; const n=c.n;
+    if(b['EV_E'+n]&&!b['EV_C'+n]) c.valve=1; else if(b['EV_C'+n]&&!b['EV_E'+n]) c.valve=-1;
+    else if(c.valve===0){ if(b['SE'+n]) c.valve=1; else if(b['SC'+n]) c.valve=-1; }
+  }
+  if(ST.enLinea) setPlanta(true,null,null);
+}
+
+/* =====================================================================
+   3. TABLERO DE MANDO (DOM)
+   ===================================================================== */
+// Etapas
+$('etapas').innerHTML=Array.from({length:9},(_,i)=>`<span data-etapa="${i}" title="${esc(ETAPAS[i])}">X${i}</span>`).join('');
+// Señales por cilindro
+{
+  const g=$('senales');
+  g.innerHTML='<span></span><span class="cab">EV_E</span><span class="cab">EV_C</span><span class="cab">SC</span><span class="cab">SE</span>'+
+    PLC_TAGS.map(tag=>{ const n=CYL[tag].n; return `<span class="tag">${tag}</span>`+
+      `<span class="cel" title="Bobina ${tag}+ (O:2/${(n-1)*2})"><i class="led mem" data-bit="EV_E${n}"></i></span>`+
+      `<span class="cel" title="Bobina ${tag}− (O:2/${(n-1)*2+1})"><i class="led mem" data-bit="EV_C${n}"></i></span>`+
+      `<span class="cel" title="Sensor retraído SC${n}"><i class="led" data-bit="SC${n}"></i></span>`+
+      `<span class="cel" title="Sensor extendido SE${n}"><i class="led" data-bit="SE${n}"></i></span>`; }).join('');
+}
+// Tira inferior: solo los cinco cilindros del proyecto
+const barEls={};
+for(const tag of VIVOS){
+  const c=CYL[tag]; const d=document.createElement('div'); d.className='bar';
+  const est=c.kind==='neum';
+  d.innerHTML=`<div class="head"><span class="tag">${tag}</span><span class="val" data-val="${tag}">0 mm</span></div>
+   <div class="track"><div class="fill ${est?'pneu':''}" data-fill="${tag}"></div></div>
+   <div class="ends"><span><i class="led" data-bit="${c.sens[0]}"></i>${c.sens[0]}</span>${est?'<span class="est" title="4A/5A no tienen sensores en el PLC: la posición es un modelo de tiempos">estimada</span>':'<span class="est" data-estimada hidden title="El PLC solo tiene sensores de extremo: la posición intermedia se estima con la calibración del HMI">estimada</span>'}<span>${c.sens[1]}<i class="led" data-bit="${c.sens[1]}"></i></span></div>`;
+  $('strip').appendChild(d); barEls[tag]=d;
+}
+
+function mio(){ const m=ST.snap&&ST.snap.mando; return !!(m&&m.titular&&m.titular.origen==='web'&&ST.yo&&m.titular.usuario===ST.yo.usuario); }
+function puedo(tag){
+  const p=(ST.yo&&ST.yo.permisos)||{}; const m=(ST.snap&&ST.snap.mando)||{};
+  if(!ST.enLinea) return [false,'la planta no está en línea'];
+  if(tag==='STOPV') return p.mandos?[true,'']:[false,'tu rol solo puede ver'];
+  if(!p.mandos) return [false,'tu rol solo puede ver'];
+  if(!m.remoto_habilitado) return [false,'el mando remoto está deshabilitado en el HMI local'];
+  if(!mio()) return [false,m.titular?('el mando lo tiene '+m.titular.usuario):'pide el mando primero'];
+  return [true,''];
+}
+function permisos(){
+  const p=(ST.yo&&ST.yo.permisos)||{}; const m=(ST.snap&&ST.snap.mando)||{}; const esMio=mio();
+  document.querySelectorAll('[data-pulso]').forEach(b=>{ const [ok,por]=puedo(b.dataset.pulso); b.disabled=!ok; b.title=ok?'':por; });
+  const paramOk=ST.enLinea&&p.parametros&&esMio;
+  document.querySelectorAll('[data-tag]').forEach(b=>{ b.disabled=!paramOk; });
+  $('paramHint').textContent=paramOk?'Tienes el mando: los cambios se escriben en el PLC y se releen.':(!p.parametros?'Escribir parámetros requiere rol ingeniero o admin.':'Pide el mando para escribir parámetros.');
+  $('btnPedir').disabled=!(ST.enLinea&&p.mandos&&m.remoto_habilitado&&!esMio);
+  $('btnLiberar').disabled=!esMio;
+}
+
+function pintarMando(){
+  const m=(ST.snap&&ST.snap.mando)||null;
+  if(!m){ $('mandoEstado').textContent='Sin datos del mando.'; $('mandoRemoto').textContent='—'; return; }
+  $('mandoRemoto').innerHTML=m.remoto_habilitado?'<span class="ok">remoto habilitado</span>':'<span class="aviso">remoto deshabilitado en el HMI</span>';
+  let t;
+  if(!m.titular) t='Mando <b>libre</b>.';
+  else if(m.titular.origen==='local') t='Lo tiene el <b>HMI local</b> (frente a la máquina). Vence en '+Math.round(m.vence_en_s)+' s sin actividad.';
+  else t='Lo tiene <b>'+esc(m.titular.usuario)+'</b> ('+esc(m.titular.rol)+')'+(mio()?' — <b class="ok">eres tú</b>':'')+'. Vence en '+Math.round(m.vence_en_s)+' s.';
+  const u=m.ultima_orden;
+  if(u) t+='<br><span class="tenue">Última orden: '+esc(u.op==='pulso'?'pulso '+u.tag:u.tag+' = '+u.valor)+' · '+esc(u.quien?(u.quien.origen==='local'?'HMI local':u.quien.usuario):'?')+' · '+hora(u.t)+' · '+(u.ok?'<span class="ok">ok</span>':'<span class="alarma">rechazada</span>')+'</span>';
+  $('mandoEstado').innerHTML=t;
+}
+
+function pintarGrafcet(s){
+  // Con el modo suave del puente, etapa, ACC y tiempo son los previstos (los mismos que anima el HMI).
+  const b=s.bits||{}, n=s.ints||{}, sv=s.suave||null; const e=(sv&&sv.etapa!=null)?sv.etapa:s.etapa;
+  document.querySelectorAll('[data-etapa]').forEach(el=>{ const i=+el.dataset.etapa; el.className=(e===i?(i===8?'fin':'on'):''); });
+  $('grafcetSub').textContent=b.ACTIVE?'en marcha':(e===0?'en reposo':'detenida');
+  $('etapaTexto').textContent=(e==null?'Etapa no determinada':'X'+e+' · '+ETAPAS[e]);
+  const tn=TIMER_DE_ETAPA[e];
+  if(tn!=null){ const acc=(sv&&sv.acc&&sv.acc[tn]!=null)?+sv.acc[tn]:(+n['T'+tn+'_ACC']||0), pre=+n['T'+tn+'_PRE']||0; $('tonFill').style.width=(pre>0?clamp(acc/pre,0,1)*100:0).toFixed(1)+'%'; $('tonTexto').textContent='T4:'+tn+' · '+(acc/100).toFixed(2)+' / '+(pre/100).toFixed(2)+' s'+(b['T'+tn+'_DN']?' · DN':''); }
+  else { $('tonFill').style.width='0%'; $('tonTexto').textContent=e===1?'espera SE1':(e===0?'—':'—'); }
+  $('tEtapa').textContent=(+((sv&&sv.t_etapa!=null)?sv.t_etapa:s.t_etapa)||0).toFixed(1)+' s';
+  $('ciclos').textContent=(n.C_ACC==null?'—':n.C_ACC)+' / '+(n.C_PRE==null?'—':n.C_PRE);
+  $('fines').textContent=s.fines==null?'—':s.fines;
+}
+
+function pintarParams(s){
+  const n=s.ints||{};
+  const f=(v)=>v==null?'—':(v/100).toFixed(2)+' s';
+  $('vTesp').textContent='T4:0…4.PRE = '+f(n.T0_PRE)+(n.T0_PRE!=null&&[1,2,3,4].some(i=>n['T'+i+'_PRE']!==n.T0_PRE)?' (desiguales)':'');
+  $('vTneum').textContent='T4:5.PRE = '+f(n.T5_PRE);
+  $('vNcic').textContent='C5:0.PRE = '+(n.C_PRE==null?'—':n.C_PRE);
+  for(const [id,v,esc_]of [['pTesp',n.T0_PRE,100],['pTneum',n.T5_PRE,100],['pNcic',n.C_PRE,1]]){
+    const el=$(id); if(document.activeElement!==el&&el.value===''&&v!=null) el.placeholder=esc_===100?(v/100).toFixed(2):String(v);
+  }
+}
+
+function pintarSenales(s){
+  const b=s.bits||{};
+  document.querySelectorAll('[data-bit]').forEach(el=>{
+    const k=el.dataset.bit; let v;
+    if(k in b) v=!!b[k];
+    else { // sensores estimados de 4A/5A a partir de la posición
+      const m=/^([CE])([45])A$/.exec(k); if(m){ const c=CYL[m[2]+'A']; v=m[1]==='C'?c.pos<0.03:c.pos>0.97; } else v=false;
+    }
+    el.classList.toggle('on',v);
+  });
+}
+
+function pintarAlarmas(s){
+  const act=(s.alarmas||[]).filter(a=>a.activa);
+  $('banda').hidden=!act.length;
+  if(act.length) $('banda').textContent=act.map(a=>a.msg).join(' · ');
+}
+
+function pintarLat(s){
+  const l=(s&&s.lat)||{}; const partes=[];
+  if(l.lectura_ms!=null) partes.push('PLC '+(+l.lectura_ms).toFixed(1)+' ms');
+  if(s&&s.lat_web_ms!=null) partes.push('enlace '+Math.round(s.lat_web_ms)+' ms');
+  if(ST.rttWeb!=null) partes.push('web '+Math.round(ST.rttWeb)+' ms');
+  if(s&&s.suave) partes.push('suave');
+  $('pillLat').textContent=partes.length?partes.join(' · '):'lat —';
+}
+
+function syncHmi(){
+  const s=ST.snap;
+  if(s){ pintarGrafcet(s); pintarParams(s); pintarSenales(s); pintarAlarmas(s); pintarMando(); pintarLat(s);
+    document.querySelectorAll('[data-estimada]').forEach(el=>el.hidden=!s.pos_estimada); }
+  permisos();
+}
+function syncBarras(){
+  for(const tag of VIVOS){ const c=CYL[tag]; barEls[tag].querySelector('[data-fill]').style.width=(c.pos*100).toFixed(1)+'%'; barEls[tag].querySelector('[data-val]').textContent=Math.round(c.pos*c.stroke*10)+' mm'; }
+}
+
+// Órdenes desde el tablero
+document.querySelectorAll('[data-pulso]').forEach(b=>b.onclick=()=>orden({op:'pulso',tag:b.dataset.pulso},'Pulso '+b.dataset.pulso));
+$('btnPedir').onclick=()=>orden({op:'mando',accion:'pedir'},'Pedir mando');
+$('btnLiberar').onclick=()=>orden({op:'mando',accion:'liberar'},'Liberar mando');
+document.querySelectorAll('[data-tag]').forEach(b=>b.onclick=()=>{
+  const tag=b.dataset.tag; const inp=b.parentElement.querySelector('input'); const txt=inp.value.trim();
+  if(txt===''){ toast('Escribe un valor','mal'); inp.focus(); return; }
+  let v;
+  if(tag==='N_CICLOS'){ v=parseInt(txt,10); if(!(v>=1&&v<=32767)){ toast('N_CICLOS debe estar entre 1 y 32767','mal'); return; } }
+  else { v=Math.round(parseFloat(txt.replace(',','.'))*100); if(!(v>=0&&v<=32767)){ toast('El tiempo debe estar entre 0 y 327,67 s','mal'); return; } }
+  orden({op:'escribir',tag,valor:v},tag+' = '+(tag==='N_CICLOS'?v:(v/100).toFixed(2)+' s'));
+});
+document.querySelectorAll('.param input').forEach(inp=>inp.onkeydown=e=>{ if(e.key==='Enter') inp.parentElement.querySelector('button').click(); });
+
+$('btnPanel').onclick=e=>{ const solo=document.body.classList.toggle('solo3d'); e.currentTarget.setAttribute('aria-pressed',!solo); };
+// Pestañas (pantallas angostas): una tarjeta a la vez; en escritorio no se ven y todas las tarjetas quedan visibles.
+document.querySelectorAll('#tabs [data-tab]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#tabs [data-tab]').forEach(x=>x.setAttribute('aria-selected',String(x===b)));
+  document.querySelectorAll('.dock .card').forEach(c=>c.classList.toggle('activa',c.id===b.dataset.tab));
+});
+$('btnCuentas').onclick=()=>{ const d=$('drawer'); d.classList.toggle('open'); if(d.classList.contains('open')){ cargarUsuarios(); cargarAuditoria(); } };
+
+/* --- cuentas (admin) y auditoría (ingeniero+) ------------------------- */
+async function cargarUsuarios(){
+  if(!(ST.yo&&ST.yo.permisos&&ST.yo.permisos.admin)) return;
+  const r=await api('/api/usuarios'); if(!r.ok) return;
+  $('nr').innerHTML=r.roles.map(x=>`<option>${esc(x)}</option>`).join('');
+  $('tusuarios').innerHTML='<tr><th>usuario</th><th>rol</th><th>estado</th><th></th></tr>'+r.usuarios.map(u=>
+    `<tr><td>${esc(u.usuario)}</td><td><select data-rol="${esc(u.usuario)}">`+r.roles.map(x=>`<option ${x===u.rol?'selected':''}>${esc(x)}</option>`).join('')+
+    `</select></td><td>${u.activo?'<span class="ok">activo</span>':'<span class="aviso">inactivo</span>'}</td><td><button class="sig" data-borrar="${esc(u.usuario)}">Borrar</button></td></tr>`).join('');
+  document.querySelectorAll('[data-rol]').forEach(sel=>sel.onchange=async()=>{ const x=await api('/api/usuarios',{accion:'rol',usuario:sel.dataset.rol,rol:sel.value}); toast(x.ok?'Rol cambiado':(x.msg||'error'),x.ok?'ok':'mal'); cargarUsuarios(); });
+  document.querySelectorAll('[data-borrar]').forEach(b=>b.onclick=async()=>{ if(!confirm('¿Borrar la cuenta '+b.dataset.borrar+'?')) return; const x=await api('/api/usuarios',{accion:'borrar',usuario:b.dataset.borrar}); toast(x.ok?'Cuenta borrada':(x.msg||'error'),x.ok?'ok':'mal'); cargarUsuarios(); });
+}
+$('ncrear').onclick=async()=>{
+  const x=await api('/api/usuarios',{accion:'crear',usuario:$('nu').value.trim(),clave:$('nc').value,rol:$('nr').value});
+  toast(x.ok?'Cuenta creada':(x.msg||'error'),x.ok?'ok':'mal'); if(x.ok){ $('nu').value=$('nc').value=''; cargarUsuarios(); }
+};
+async function cargarAuditoria(){
+  if(!(ST.yo&&ST.yo.permisos&&ST.yo.permisos.auditoria)) return;
+  const r=await api('/api/auditoria?n=100'); if(!r.ok) return;
+  $('auditoriaLog').innerHTML=r.filas.slice().reverse().map(f=>`<div>${hora(f.t)} <b>${esc(f.usuario)}</b> <span class="tenue">(${esc(f.rol||'')})</span> ${esc(f.accion)} ${esc(f.detalle||'')} → <span class="${f.ok?'ok':'alarma'}">${f.ok?'ok':'no'}</span> ${esc(f.msg||'')}</div>`).join('');
+}
+
+/* =====================================================================
+   4. ESCENA 3D (three.js r128). Si no carga, el tablero de mando sigue funcionando.
+   ===================================================================== */
+function crearEscena(){
+const canvas=document.getElementById('scene');
+const movil=window.matchMedia('(max-width:900px), (pointer:coarse)').matches;   // teléfono o tableta: menos píxeles y sombras
+const renderer=new THREE.WebGLRenderer({canvas, antialias:true, alpha:true});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,movil?1.5:2));
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.outputEncoding=THREE.sRGBEncoding; renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.05;
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(38, 1, 1, 2000);
+
+scene.add(new THREE.HemisphereLight(0xd6e0ff, 0x2a2f3a, 0.7));
+const sun=new THREE.DirectionalLight(0xfff4e6, 1.2); sun.position.set(60,170,170); sun.castShadow=true;
+sun.shadow.mapSize.set(movil?1024:2048,movil?1024:2048); const sc=sun.shadow.camera; sc.left=-130; sc.right=130; sc.top=140; sc.bottom=-120; sc.near=10; sc.far=500; sun.shadow.bias=-0.0006;
+sun.target.position.set(0,30,-10); scene.add(sun.target);
+scene.add(sun);
+const fill=new THREE.DirectionalLight(0x9fb7ff, 0.35); fill.position.set(-120,60,80); scene.add(fill);
+
+const M = {
+  steel:  new THREE.MeshStandardMaterial({color:0xd8dbe1, metalness:.85, roughness:.30}),
+  rod:    new THREE.MeshStandardMaterial({color:0xf0f2f6, metalness:.95, roughness:.14}),
+  black:  new THREE.MeshStandardMaterial({color:0x16171a, metalness:.35, roughness:.55}),
+  frame:  new THREE.MeshStandardMaterial({color:0x111214, metalness:.4, roughness:.5}),
+  yellow: new THREE.MeshStandardMaterial({color:0xf1c11d, metalness:.35, roughness:.5}),
+  white:  new THREE.MeshStandardMaterial({color:0xeceef1, roughness:.7}),
+  panel:  new THREE.MeshStandardMaterial({color:0xdcdedb, roughness:.8}),
+  red:    new THREE.MeshStandardMaterial({color:0xd8261a, roughness:.45}),
+  green:  new THREE.MeshStandardMaterial({color:0x1e9c48, roughness:.45}),
+  chrome: new THREE.MeshStandardMaterial({color:0xd0d4db, metalness:1, roughness:.18}),
+  floor:  new THREE.MeshStandardMaterial({color:0x1d2536, roughness:.95}),
+  gauge:  new THREE.MeshStandardMaterial({color:0xf5f5f5, roughness:.6}),
+  redTube:new THREE.MeshStandardMaterial({color:0xd8301c, roughness:.5}),
+};
+// Todo lo que va montado sobre el tablero cuelga de `root`, que se inclina al final; el bastidor y el suelo van en `scene`.
+const root=new THREE.Group(); scene.add(root);
+function shadowed(m){ m.castShadow=true; m.receiveShadow=true; return m; }
+function box(w,h,d,mat,x,y,z,parent){ const m=shadowed(new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat)); m.position.set(x||0,y||0,z||0); (parent||root).add(m); return m; }
+function cyl(r,h,mat,axis,x,y,z,parent,seg){ const m=shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,seg||28),mat)); if(axis==='x') m.rotation.z=Math.PI/2; if(axis==='z') m.rotation.x=Math.PI/2; m.position.set(x||0,y||0,z||0); (parent||root).add(m); return m; }
+const FLOOR_Y=-72;
+M.burgundy=new THREE.MeshStandardMaterial({color:0x7a1e26, metalness:.5, roughness:.35});
+M.grey=new THREE.MeshStandardMaterial({color:0x60646b, roughness:.6});
+M.lightgrey=new THREE.MeshStandardMaterial({color:0x9ea2a8, roughness:.65});
+M.blue=new THREE.MeshStandardMaterial({color:0x2a4fb8, roughness:.5});
+M.yellowPend=new THREE.MeshStandardMaterial({color:0xf2d21f, roughness:.5});
+M.clear=new THREE.MeshStandardMaterial({color:0xdfe6ee, roughness:.2, transparent:true, opacity:.45});
+const ledOn = new THREE.MeshStandardMaterial({color:0x3fd57f, emissive:0x3fd57f, emissiveIntensity:1.2});
+const ledOff= new THREE.MeshStandardMaterial({color:0x2b3a31, roughness:.6});
+const solOn = new THREE.MeshStandardMaterial({color:0xf47b2a, emissive:0xf47b2a, emissiveIntensity:1.0});
+const solOff= new THREE.MeshStandardMaterial({color:0x3a2c22, roughness:.6});
+const pilotOn= new THREE.MeshStandardMaterial({color:0x3fd57f, emissive:0x2fd070, emissiveIntensity:1.1, roughness:.4});
+
+/* ---- suelo, tablero perforado y bastidor ---- */
+{
+  const floor=new THREE.Mesh(new THREE.PlaneGeometry(800,800), M.floor); floor.rotation.x=-Math.PI/2; floor.position.y=FLOOR_Y; floor.receiveShadow=true; scene.add(floor);
+  const c=document.createElement('canvas'); c.width=1024; c.height=732; const g=c.getContext('2d');
+  g.fillStyle='#b7bbc3'; g.fillRect(0,0,c.width,c.height);
+  const grad=g.createLinearGradient(0,0,c.width,c.height); grad.addColorStop(0,'rgba(255,255,255,.10)'); grad.addColorStop(1,'rgba(0,0,0,.08)'); g.fillStyle=grad; g.fillRect(0,0,c.width,c.height);
+  g.fillStyle='#646973';
+  for(let y=6;y<c.height;y+=12) for(let x=6+(Math.floor(y/12)%2)*6;x<c.width;x+=12){ g.beginPath(); g.arc(x,y,2.6,0,Math.PI*2); g.fill(); }
+  const tex=new THREE.CanvasTexture(c); tex.anisotropy=8; tex.encoding=THREE.sRGBEncoding;
+  const board=box(BOARD.w,BOARD.h,1.6,new THREE.MeshStandardMaterial({map:tex, roughness:.7, metalness:.25}),0,BOARD.h/2,-0.8);
+  board.receiveShadow=true;
+  const t=3;
+  box(BOARD.w+2*t,t,4,M.frame,0,BOARD.h+t/2,-1.2); box(BOARD.w+2*t,t,4,M.frame,0,-t/2,-1.2);
+  box(t,BOARD.h,4,M.frame,-BOARD.w/2-t/2,BOARD.h/2,-1.2); box(t,BOARD.h,4,M.frame,BOARD.w/2+t/2,BOARD.h/2,-1.2);
+  box(BOARD.w-10,2,3,M.black,0,BOARD.h+4.5,0.5);
+  for(let i=0;i<14;i++) cyl(.5,1.8,M.yellow,'z',-60+i*4.6,BOARD.h+4.5,2.6);
+  const P=scene;
+  box(100,3,64,M.frame,0,FLOOR_Y+1.5,-14,P);
+  box(90,2,50,M.frame,0,FLOOR_Y+2.6,-14,P);
+  for(const x of [-34,34]){
+    box(4,68,4,M.frame,x,FLOOR_Y+34,-4,P);
+    box(4,160,4,M.frame,x,FLOOR_Y+80,-44,P);
+    box(4,4,16,M.frame,x,86,-36,P);
+    box(4,4,42,M.frame,x,-4,-24,P);
+  }
+  box(72,4,4,M.frame,0,86,-44,P); box(72,4,4,M.frame,0,-4,-44,P);
+  box(84,2,30,M.frame,0,-30,-16,P);
+  const mods=[[-32,7,'grey'],[-24,7,'lightgrey'],[-16,7,'lightgrey'],[-8,7,'blue'],[0,7,'lightgrey'],[8,7,'lightgrey'],[16,7,'grey'],[24,7,'black'],[32,7,'lightgrey']];
+  for(const [x,w,m] of mods) box(w-0.8,14,10,M[m],x,-22,-14,P);
+  box(70,1.2,2,M.grey,0,-28.6,-8,P);
+  box(26,8,18,M.clear,0,FLOOR_Y+7.6,-12,P); box(26,1,18,M.lightgrey,0,FLOOR_Y+3.7,-12,P);
+  for(const x of [-42,42]){
+    box(6,22,4,M.yellowPend,x,-36,4,P); box(4,3,1,M.red,x,-30,6.2,P); cyl(1,1,M.black,'z',x,-36,6.4,P); cyl(1,1,M.black,'z',x,-41,6.4,P);
+    const cable=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([new THREE.Vector3(x,-25,4),new THREE.Vector3(x+3,-12,6),new THREE.Vector3(x-2,-2,2)]),24,.35,6,false),M.black); P.add(cable);
+  }
+}
+
+/* ---- rack del PLC sobre el tablero, con unidades de mantenimiento en los extremos ---- */
+const plcLeds=[];
+{
+  const y0=BOARD.h+6;
+  box(90,3,12,M.frame,0,y0-1.5,-4);
+  const plc=[[-38,8,'grey',18],[-29,5,'lightgrey',16],[-24,4,'lightgrey',16],[-19,4,'lightgrey',16],[-8,14,'grey',18],[4,8,'black',18],[12,7,'grey',18],[19,7,'grey',18],[26,7,'grey',18],[33,5,'lightgrey',16],[38,4,'lightgrey',16],[42,4,'lightgrey',16]];
+  for(const [x,w,m,h] of plc){ box(w-0.6,h,11,M[m],x,y0+h/2,-4); }
+  for(let i=0;i<8;i++){ const led=new THREE.Mesh(new THREE.BoxGeometry(.6,.6,.2),i%3?ledOn:solOn); led.position.set(-13+i*1.4,y0+15,1.7); root.add(led); plcLeds.push(led); }
+  // Tarjeta de entradas (I:1/0…7) y de salidas (O:2/0…5): un LED por bit, encendidos por el snapshot.
+  const ioLeds={I:[],O:[]};
+  for(let i=0;i<8;i++){ const led=new THREE.Mesh(new THREE.BoxGeometry(.5,.5,.2),ledOff); led.position.set(12-2.4+(i%4)*1.3,y0+15-Math.floor(i/4)*1.1,1.7); root.add(led); ioLeds.I.push(led); }
+  for(let i=0;i<6;i++){ const led=new THREE.Mesh(new THREE.BoxGeometry(.5,.5,.2),ledOff); led.position.set(19-2.4+(i%4)*1.3,y0+15-Math.floor(i/4)*1.1,1.7); root.add(led); ioLeds.O.push(led); }
+  for(let i=0;i<4;i++){ const led=new THREE.Mesh(new THREE.BoxGeometry(.5,.5,.2),ledOn); led.position.set(26-2+i*1.3,y0+15,1.7); root.add(led); plcLeds.push(led); }
+  plcLeds.io=ioLeds;
+  for(const x of [-52,52]){
+    const g=new THREE.Group(); g.position.set(x,y0+9,0); root.add(g);
+    box(5,4,5,M.black,0,2,0,g); cyl(1.4,3,M.red,'y',0,5.5,0,g);
+    cyl(1.9,9,M.clear,'y',0,-4,0,g); cyl(1.6,1.2,M.black,'y',0,-9,0,g);
+    const dial=cyl(2.6,0.8,M.gauge,'z',x<0?3.6:-3.6,2,2.6,g); dial.rotation.x=Math.PI/2;
+    cyl(2.7,0.5,M.black,'z',x<0?3.6:-3.6,2,2.2,g);
+    const n=box(1.8,0.25,0.2,M.red,x<0?4.1:-3.1,2,3.15,g); n.rotation.z=0.9;
+    cyl(.6,6,M.black,'x',x<0?-4:4,2,0,g);
+  }
+  for(const [x,y,r] of [[44,y0+6,5.5],[60,y0+4,6.5]]){ const d=shadowed(new THREE.Mesh(new THREE.SphereGeometry(r,24,16),M.burgundy)); d.position.set(x,y,-6); root.add(d); cyl(r*0.8,1.5,M.black,'z',x,y,-6+r*0.7); }
+}
+
+/* ---- reguladores de presión de los bordes (4) ---- */
+for(const [x,y] of [[-67,61],[-67,31],[67,61],[67,31]]){
+  const g=new THREE.Group(); g.position.set(x,y,0); root.add(g);
+  cyl(3.4,3,M.black,'z',0,0,1.5,g,28); cyl(2.9,0.6,M.gauge,'z',0,0,3.2,g,28);
+  cyl(1.1,2.2,M.black,'z',0,0,4.3,g,16); box(0.5,1.6,0.4,M.red,0,1.2,3.6,g);
+  box(3,3,3,M.black,0,-5,1.5,g); cyl(.5,3,M.yellow,'x',0,-5,3.2,g,8);
+}
+
+/* ---- panel de mando (esquina superior derecha) ---- */
+const PANEL = {};
+{
+  const g=new THREE.Group(); g.position.set(52,86,2.4); root.add(g);
+  box(40,22,4.8,M.panel,0,0,0,g);
+  box(40,0.8,4.8,M.black,0,-10.6,0,g); box(40,1.5,4.8,M.grey,0,10.3,0,g);
+  const mk=(r,h,mat,x,y)=>cyl(r,h,mat,'z',x,y,2.4+h/2,g,36);
+  PANEL.estop=mk(3.6,2.2,M.red,-13,3.5); mk(1.4,0.8,M.chrome,-13,3.5); mk(4.2,0.5,M.yellow,-13,3.5);
+  PANEL.estop2=mk(3.6,2.2,M.red, 13,3.5); mk(4.2,0.5,M.yellow,13,3.5);
+  PANEL.reset=mk(1.9,1.4,M.chrome,-4.3,3.8);  mk(2.2,0.4,M.black,-4.3,3.8);
+  PANEL.sel=mk(1.9,1.4,M.chrome, 4.3,3.8);    mk(2.2,0.4,M.black,4.3,3.8);
+  PANEL.start=mk(1.5,1.2,M.green,-13,-4.6);
+  PANEL.stop =mk(1.5,1.2,M.black,-4.3,-4.6);
+  PANEL.b3   =mk(1.5,1.2,M.black, 4.3,-4.6);
+  PANEL.b4   =mk(1.5,1.2,M.green, 13,-4.6);
+  for(const k in PANEL){ PANEL[k].userData.z0=PANEL[k].position.z; }
+  // START / STOP / RESET del panel mandan pulsos STARTV / STOPV / RESETV (con permisos y mando).
+  PANEL.start.userData.click='STARTV'; PANEL.stop.userData.click='STOPV'; PANEL.reset.userData.click='RESETV';
+  PANEL.estop.userData.click='ESTOP'; PANEL.estop2.userData.click='ESTOP'; PANEL.b4.userData.click='PILOTO'; PANEL.b3.userData.click='PILOTO';
+  for(let i=0;i<10;i++){ cyl(.45,1.8,M.yellow,'z',34+i*2.8,71,1.2); }
+  for(let i=0;i<8;i++){ cyl(.45,1.8,M.yellow,'z',-24+i*2.8,69,1.2); }
+}
+
+/* ---- etiquetas ---- */
+const labels=[];
+function roundRect(g,x,y,w,h,r){ g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r); g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); }
+function makeLabel(text, color){
+  const c=document.createElement('canvas'); c.width=256; c.height=96; const g=c.getContext('2d');
+  g.font='600 44px "IBM Plex Mono", monospace'; g.textAlign='center'; g.textBaseline='middle';
+  g.fillStyle='rgba(10,14,24,.72)'; const w=g.measureText(text).width+36; roundRect(g,128-w/2,18,w,60,14); g.fill();
+  g.fillStyle=color||'#eef1f6'; g.fillText(text,128,49);
+  const tex=new THREE.CanvasTexture(c); tex.encoding=THREE.sRGBEncoding;
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:tex, transparent:true, depthTest:false})); s.scale.set(8,3,1); s.renderOrder=10; labels.push(s); return s;
+}
+
+/* ---- cilindro neumático ---- */
+const pickables=[];
+function makeCylinder(opts){
+  const {len, stroke, r, tag, showLabel, single, labelColor} = opts;
+  const g=new THREE.Group(); g.rotation.x=Math.PI/2;
+  const body=cyl(r,len,M.steel,'x',0,0,0,g,36); body.userData.tag=tag; pickables.push(body);
+  const capW=2.6; const capS=r*2.5;
+  box(capW,capS,capS,M.black, len/2-capW/2+0.6,0,0,g); box(capW,capS,capS,M.black,-len/2+capW/2-0.6,0,0,g);
+  for(const [dy,dz] of [[1,1],[1,-1],[-1,1],[-1,-1]]){ cyl(.16,len+1.2,M.chrome,'x',0,dy*r*1.05,dz*r*1.05,g,8); }
+  box(3,1.6,capS+1.2,M.black, len/2-1, -r*1.25-0.8, 0, g); box(3,1.6,capS+1.2,M.black,-len/2+1, -r*1.25-0.8, 0, g);
+  const rodLen=stroke+4; const rr=r*0.36;
+  const rod=cyl(rr,rodLen,M.rod,'x',0,0,0,g,20);
+  const tip=box(1.6,rr*3,rr*3,M.black,0,0,0,g);
+  const nut=cyl(rr*1.7,0.9,M.chrome,'x',0,0,0,g,12);
+  const rearPort=new THREE.Vector3( len/2-1.4, r*1.25+1.2, 0), frontPort=new THREE.Vector3(-len/2+1.4, r*1.25+1.2, 0);
+  cyl(.5,1.6,M.yellow,'y',rearPort.x, r*1.25+0.8, 0, g,10);
+  if(!single) cyl(.5,1.6,M.yellow,'y',frontPort.x, r*1.25+0.8, 0, g,10);
+  box(1.4,1.0,1.3,M.white, len/2-4.0, r*0.6, -r*1.05-0.9, g);
+  box(1.4,1.0,1.3,M.white,-len/2+4.0, r*0.6, -r*1.05-0.9, g);
+  const l1=new THREE.Mesh(new THREE.SphereGeometry(.28,10,10),ledOff); l1.position.set(len/2-4.0, r*0.6+0.6, -r*1.05-0.9); g.add(l1);
+  const l2=new THREE.Mesh(new THREE.SphereGeometry(.28,10,10),ledOff); l2.position.set(-len/2+4.0, r*0.6+0.6, -r*1.05-0.9); g.add(l2);
+  let label=null;
+  if(showLabel){ label=makeLabel(tag, labelColor||'#ffffff'); label.position.set(0, 1.5, -(r+3.6)); g.add(label); }
+  const out={ group:g, rod, tip, nut, len, stroke, leds:[l1,l2], rearPort, frontPort, label,
+    setPos(p){ const x=-len/2 - rodLen/2 + stroke*(1-p); rod.position.x=x; tip.position.x = x - rodLen/2 - 0.8; nut.position.x = -len/2 - 1.2; } };
+  out.setPos(0); return out;
+}
+const parts={};
+const Z_MOUNT=3.4;
+for(const tag in CYL){
+  const c=CYL[tag]; const vivo=c.kind!=='libre';
+  const a=makeCylinder({len:c.len, stroke:c.stroke, r:c.r, tag, showLabel:true, single:c.kind!=='plc'&&c.kind!=='libre'||PNEU_TAGS.includes(tag), labelColor:vivo?'#ffffff':'#8a93a6'});
+  a.group.position.set(c.pos3[0], c.pos3[1], Z_MOUNT); root.add(a.group); parts[tag]=a;
+}
+
+/* ---- manifolds de electroválvulas ---- */
+function makeManifold(x,y,tags){
+  const g=new THREE.Group(); g.position.set(x,y,0); g.rotation.x=Math.PI/2; root.add(g);
+  const stations=tags.length; const w=stations*5.4+3;
+  box(w,3.6,6.4,M.black,0,1.8,0,g);
+  box(w+1.5,0.8,7.2,M.frame,0,0.4,0,g);
+  const ports=[]; const sols=[];
+  for(let i=0;i<stations;i++){
+    const sx=-w/2+3+i*5.4;
+    box(4.6,2.6,5.6,M.black,sx,4.9,0,g);
+    const pa=cyl(.55,1.5,M.yellow,'y',sx-1.2,6.9,-1.3,g,10);
+    const pb=cyl(.55,1.5,M.yellow,'y',sx+1.2,6.9,-1.3,g,10);
+    cyl(.55,1.8,M.yellow,'z',sx,1.8,3.9,g,10);
+    const s1=new THREE.Mesh(new THREE.BoxGeometry(1.2,0.7,0.4),solOff); s1.position.set(sx-1.5,5.2,2.95); g.add(s1);
+    const s2=new THREE.Mesh(new THREE.BoxGeometry(1.2,0.7,0.4),solOff); s2.position.set(sx+1.5,5.2,2.95); g.add(s2);
+    sols.push([s1,s2]); ports.push([pa,pb]);
+  }
+  g.updateMatrixWorld(true);
+  const out=new THREE.Vector3(0,0,0.8);
+  const world=ports.map(([a,b])=>[a.getWorldPosition(new THREE.Vector3()).add(out), b.getWorldPosition(new THREE.Vector3()).add(out)]);
+  return {group:g, ports:world, sols, tags};
+}
+const manifoldL = makeManifold(-40, 46, UPPER_TAGS);
+const manifoldR = makeManifold( 49, 15, LOWER_TAGS);
+const blockPneu = makeManifold( 46, 47, PNEU_TAGS);
+
+/* ---- tubos ---- */
+const tubes=[];
+const OUT=new THREE.Vector3(0,0,1);
+const tubeMat=()=>new THREE.MeshStandardMaterial({color:0x1a1a1d, roughness:.5, metalness:.1, emissive:0x000000});
+function makeTube(pA,pB,mat,lift){
+  const mid=pA.clone().add(pB).multiplyScalar(.5).addScaledVector(OUT, lift||9).add(new THREE.Vector3(0,-Math.min(6,pA.distanceTo(pB)*0.12),0));
+  const curve=new THREE.CatmullRomCurve3([pA, pA.clone().addScaledVector(OUT,4), mid, pB.clone().addScaledVector(OUT,4), pB], false, 'catmullrom', 0.6);
+  const m=new THREE.Mesh(new THREE.TubeGeometry(curve, 60, .36, 8, false), mat); m.castShadow=true; root.add(m); return m;
+}
+function wireGroup(manifold){
+  manifold.tags.forEach((tag,i)=>{
+    const a=parts[tag]; if(!a) return; const c=CYL[tag];
+    a.group.updateMatrixWorld(true);
+    const rear=a.group.localToWorld(a.rearPort.clone()), front=a.group.localToWorld(a.frontPort.clone());
+    const [pa,pb]=manifold.ports[i];
+    const red = PNEU_TAGS.includes(tag);
+    const mA=red?M.redTube.clone():tubeMat(); tubes.push({mesh:makeTube(pa,rear,mA,9), mat:mA, tag, side:'A', red});
+    if(c.kind==='plc'||LOWER_TAGS.includes(tag)){ const mB=tubeMat(); tubes.push({mesh:makeTube(pb,front,mB,11), mat:mB, tag, side:'B', red:false}); }
+  });
+}
+wireGroup(manifoldL); wireGroup(manifoldR); wireGroup(blockPneu);
+{
+  const feed=new THREE.MeshStandardMaterial({color:0x1a1a1d, roughness:.5});
+  makeTube(new THREE.Vector3(-52,BOARD.h+6,4), new THREE.Vector3(-56,50,3), feed, 8);
+  makeTube(new THREE.Vector3(52,BOARD.h+6,4), new THREE.Vector3(58,51,3), feed, 6);
+  makeTube(new THREE.Vector3(58,43,3), new THREE.Vector3(62,19,3), feed, 5);
+  makeTube(new THREE.Vector3(-64,58,3), new THREE.Vector3(-56,49,3), feed, 4);
+  makeTube(new THREE.Vector3(64,58,3), new THREE.Vector3(60,51,3), feed, 4);
+}
+
+/* ---- finales de carrera y válvulas manuales ---- */
+const lsLeds=[];
+function limitSwitch(x,y,name){
+  const g=new THREE.Group(); g.position.set(x,y,0); g.rotation.x=Math.PI/2; root.add(g);
+  box(2.2,1.6,1.6,M.white,0,0.8,0,g); box(2.6,0.5,2.0,M.black,0,0.25,0,g);
+  cyl(.35,0.9,M.chrome,'z',-0.6,1.85,0,g,10);
+  const led=new THREE.Mesh(new THREE.SphereGeometry(.26,10,10),ledOff); led.position.set(0.6,1.75,0); g.add(led);
+  if(name){ lsLeds.push({led,name}); const l=makeLabel(name,'#ffd08a'); l.scale.set(6,2.25,1); l.position.set(0,1.5,-3.4); g.add(l); }
+  return g;
+}
+// Rodillos de la cadena neumática 4A/5A (E4A/C4A/E5A/C5A: existen en la planta, no en el PLC; se iluminan por la posición estimada).
+limitSwitch(-16,58,'C4A'); limitSwitch(-6,58,'E4A'); limitSwitch(6,53,'C5A'); limitSwitch(18,53,'E5A');
+limitSwitch(-16,27,null); limitSwitch(6,27,null); limitSwitch(12,43,null); limitSwitch(38,43,null);
+limitSwitch(-16,36,null); limitSwitch(-6,34,null); limitSwitch(-58,66,null); limitSwitch(-58,26,null); limitSwitch(24,47,null); limitSwitch(30,47,null);
+function handValve(x,y,name){
+  const g=new THREE.Group(); g.position.set(x,y,0); g.rotation.x=Math.PI/2; root.add(g);
+  cyl(2.4,7,M.black,'y',0,3.5,0,g,24); cyl(2.55,0.8,M.frame,'y',0,0.4,0,g,24);
+  cyl(1.6,1.4,M.chrome,'y',0,7.6,0,g,20); cyl(.9,1.2,M.yellow,'z',0,2.5,2.6,g,10);
+  if(name){ const l=makeLabel(name,'#ffd08a'); l.scale.set(6.5,2.4,1); l.position.set(0,6,-4.2); g.add(l); }
+  return g;
+}
+handValve(-58,88,'CEV3'); handValve(-58,46,'EEV3');
+root.rotation.x=BOARD.tilt;
+
+/* ---- cámara orbital ---- */
+class Orbit{
+  constructor(cam, dom){
+    this.cam=cam; this.dom=dom; this.target=new THREE.Vector3(0,48,-8);
+    this.theta=0.22; this.phi=1.34; this.r=268; this.minR=40; this.maxR=500;
+    this.vertical_=false; this.tocado=false;
+    this.pointers=new Map(); this.moved=0; this.pinch=0;
+    dom.addEventListener('pointerdown',e=>{ this.tocado=true; this.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,b:e.button,shift:e.shiftKey}); dom.setPointerCapture(e.pointerId); this.moved=0; if(this.pointers.size===2) this.pinch=this.dist(); });
+    dom.addEventListener('pointermove',e=>{
+      const p=this.pointers.get(e.pointerId); if(!p) return;
+      const dx=e.clientX-p.x, dy=e.clientY-p.y; this.moved+=Math.abs(dx)+Math.abs(dy);
+      if(this.pointers.size===2){ p.x=e.clientX; p.y=e.clientY; const d=this.dist(); if(this.pinch) this.zoom((this.pinch-d)*0.6); this.pinch=d; return; }
+      if(p.b===2 || p.shift) this.pan(dx,dy); else { this.theta=clamp(this.theta-dx*0.0055,-1.45,1.45); this.phi=clamp(this.phi-dy*0.0055,0.35,1.62); }
+      p.x=e.clientX; p.y=e.clientY;
+    });
+    const up=e=>{ this.pointers.delete(e.pointerId); if(this.pointers.size<2) this.pinch=0; };
+    dom.addEventListener('pointerup',up); dom.addEventListener('pointercancel',up);
+    dom.addEventListener('wheel',e=>{ e.preventDefault(); this.tocado=true; this.zoom(e.deltaY); },{passive:false});
+    dom.addEventListener('contextmenu',e=>e.preventDefault());
+  }
+  dist(){ const a=[...this.pointers.values()]; return Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y); }
+  zoom(dy){ this.r=clamp(this.r*Math.exp(dy*0.0012),this.minR,this.maxR); }
+  pan(dx,dy){ const s=this.r*0.0011; const right=new THREE.Vector3().setFromMatrixColumn(this.cam.matrix,0); const upv=new THREE.Vector3().setFromMatrixColumn(this.cam.matrix,1); this.target.addScaledVector(right,-dx*s).addScaledVector(upv,dy*s); }
+  // En retrato (móvil) el tablero de mando tapa la mitad inferior: se baja la mira (el tablero sube en pantalla) y se aleja la cámara.
+  reset(){ if(this.vertical_){ this.target.set(0,28,-8); this.r=300; } else { this.target.set(0,48,-8); this.r=268; } this.theta=0.22; this.phi=1.34; }
+  vertical(v){ if(v===this.vertical_) return; this.vertical_=v; if(!this.tocado) this.reset(); }
+  update(){ const s=Math.sin(this.phi); this.cam.position.set(this.target.x+this.r*s*Math.sin(this.theta), this.target.y+this.r*Math.cos(this.phi), this.target.z+this.r*s*Math.cos(this.theta)); this.cam.lookAt(this.target); }
+}
+const orbit=new Orbit(camera, canvas);
+function resize(){
+  const w=window.innerWidth,h=window.innerHeight; renderer.setSize(w,h,false); camera.aspect=w/h;
+  // Apaisado: 38° verticales (≈63° horizontales). Retrato: se conserva el ángulo horizontal (tope 72°) para que quepa el tablero entero.
+  camera.fov=camera.aspect>=1?38:Math.min(72,2*Math.atan(Math.tan(0.55)/camera.aspect)*180/Math.PI);
+  camera.updateProjectionMatrix(); orbit.vertical(camera.aspect<1);
+}
+window.addEventListener('resize',resize); resize();
+
+/* ---- selección por clic ---- */
+const ray=new THREE.Raycaster(), ndc=new THREE.Vector2();
+canvas.addEventListener('pointerup',e=>{
+  if(orbit.moved>6) return;
+  ndc.set((e.clientX/window.innerWidth)*2-1, -(e.clientY/window.innerHeight)*2+1);
+  ray.setFromCamera(ndc,camera);
+  const hits=ray.intersectObjects([...pickables, ...Object.values(PANEL)], false);
+  if(!hits.length) return;
+  const o=hits[0].object;
+  if(o.userData.click){
+    const k=o.userData.click;
+    if(k==='ESTOP'){ toast('Este ladder no tiene paro de emergencia por HMI: usa STOP (STOPV).'); return; }
+    if(k==='PILOTO'){ toast('Piloto de marcha: '+((ST.snap&&ST.snap.bits&&ST.snap.bits.ACTIVE)?'ACTIVE = 1':'ACTIVE = 0')); return; }
+    const [ok,por]=puedo(k); if(!ok){ toast('No se puede mandar '+k+': '+por,'mal'); return; }
+    orden({op:'pulso',tag:k},'Pulso '+k); return;
+  }
+  const tag=o.userData.tag; if(!tag) return;
+  const c=CYL[tag], b=(ST.snap&&ST.snap.bits)||{};
+  if(c.kind==='libre'){ toast(tag+' está en el tablero pero no en este proyecto (sin válvula ni sensores en el PLC).'); return; }
+  if(c.kind==='neum'){ toast(tag+' · cadena neumática 4A/5A · posición estimada '+Math.round(c.pos*100)+' % · ventana T4:5'); return; }
+  const n=c.n; const est=b['SE'+n]?'extendido (SE'+n+')':(b['SC'+n]?'retraído (SC'+n+')':'en carrera');
+  toast(tag+' · '+est+' · '+Math.round(c.pos*100)+' % · '+(b['EV_E'+n]?'EV_E'+n+' ':'')+(b['EV_C'+n]?'EV_C'+n:''));
+});
+
+/* ---- sincronización por cuadro ---- */
+const tmpC=new THREE.Color();
+let exposure=1.05, offline=true;
+function isOn(tag,side){
+  const c=CYL[tag];
+  if(c.kind==='plc') return side==='A'?c.valve>0:c.valve<0;
+  if(c.kind==='neum') return side==='A'&&c.cmd;
+  return false;
+}
+function sync(dt){
+  const s=ST.snap, b=(s&&s.bits)||{}, vivo=!offline;
+  for(const tag in CYL){
+    const c=CYL[tag], a=parts[tag];
+    a.setPos(c.pos);
+    let r=false,e=false;
+    if(vivo&&c.kind==='plc'){ r=!!b['SC'+c.n]; e=!!b['SE'+c.n]; }
+    else if(vivo&&c.kind==='neum'){ r=c.pos<0.03; e=c.pos>0.97; }
+    a.leds[0].material=r?ledOn:ledOff; a.leds[1].material=e?ledOn:ledOff;
+  }
+  for(const mf of [manifoldL,manifoldR,blockPneu]){
+    mf.tags.forEach((t,i)=>{ const c=CYL[t];
+      if(vivo&&c.kind==='plc'){ mf.sols[i][0].material=b['EV_E'+c.n]?solOn:solOff; mf.sols[i][1].material=b['EV_C'+c.n]?solOn:solOff; }
+      else if(vivo&&c.kind==='neum'){ mf.sols[i][0].material=c.cmd?solOn:solOff; mf.sols[i][1].material=solOff; }
+      else { mf.sols[i][0].material=solOff; mf.sols[i][1].material=solOff; }
+    });
+  }
+  const k=1-Math.exp(-dt*8);
+  for(const tb of tubes){
+    const on=vivo&&isOn(tb.tag,tb.side);
+    tb.mat.emissive.lerp(tmpC.set(on?0xff5a10:0x000000),k);
+    tb.mat.emissiveIntensity=on?0.9:0;
+    if(!tb.red) tb.mat.color.lerp(tmpC.set(on?0x2a160a:0x1a1a1d),k);
+  }
+  for(const ls of lsLeds){ const m=/^([CE])([45])A$/.exec(ls.name); let v=false; if(vivo&&m){ const c=CYL[m[2]+'A']; v=m[1]==='C'?c.pos<0.03:c.pos>0.97; } ls.led.material=v?ledOn:ledOff; }
+  const press=(m,on)=>{ m.position.z+=((on?m.userData.z0-0.6:m.userData.z0)-m.position.z)*Math.min(1,dt*18); };
+  press(PANEL.start,vivo&&(b.START_1||b.STARTV)); press(PANEL.stop,vivo&&(b.STOP_1===false||b.STOPV)); press(PANEL.reset,vivo&&b.RESETV);
+  PANEL.b4.material=(vivo&&b.ACTIVE)?pilotOn:M.green;
+  // LEDs de las tarjetas de E/S del rack
+  const io=plcLeds.io; const I=['STOP_1','START_1','SC1','SE1','SC2','SE2','SC3','SE3'], O=['EV_E1','EV_C1','EV_E2','EV_C2','EV_E3','EV_C3'];
+  io.I.forEach((l,i)=>l.material=(vivo&&b[I[i]])?ledOn:ledOff); io.O.forEach((l,i)=>l.material=(vivo&&b[O[i]])?solOn:ledOff);
+  const objetivo=offline?0.55:1.05; exposure+=(objetivo-exposure)*Math.min(1,dt*4); renderer.toneMappingExposure=exposure;
+  labels.forEach(l=>l.visible=ST.labels!==false);
+  orbit.update(); renderer.render(scene,camera);
+}
+return { sync, resetView:()=>orbit.reset(), setOffline:v=>{ offline=!!v; } };
+}
+
+/* =====================================================================
+   5. BUCLE
+   ===================================================================== */
+$('btnView').onclick=()=>{ if(escena) escena.resetView(); };
+$('btnLabels').onclick=e=>{ ST.labels=ST.labels===false; e.currentTarget.setAttribute('aria-pressed',ST.labels!==false); };
+
+let last=performance.now(), hmiAcc=0;
+function loop(now){
+  const dt=Math.min(0.05,(now-last)/1000); last=now;
+  for(const tag of VIVOS){ const c=CYL[tag]; c.pos=c.seg.activo?c.seg.sample(now):c.interp.sample(now); if(c.kind==='neum') c.cmd=c.interp.vel>1e-4||(c.pos>0.97&&c.interp.vel>=0); }
+  if(ST.enLinea && now-ST.ultimoSnap>5000 && ST.ultimoSnap){ /* sin snapshots recientes: el puente o el gateway se pararon */ }
+  if(escena) escena.sync(dt);
+  hmiAcc+=dt;
+  if(hmiAcc>0.08){ hmiAcc=0; syncBarras(); if(ST.dirty){ ST.dirty=false; syncHmi(); } }
+  requestAnimationFrame(loop);
+}
+
+window.iniciarGemelo=function(){
+  if(window.THREE){ try{ escena=crearEscena(); }catch(e){ console.error(e); toast('No se pudo crear la escena 3D: '+e.message,'mal'); } }
+  else toast('No se pudo cargar three.js: el tablero funciona sin la vista 3D','mal');
+  syncHmi(); requestAnimationFrame(loop); iniciar();
+};
+})();
+</script>
+<script>
+// three.js: primero la copia local que sirve el servidor (funciona sin internet), si no, el CDN.
+(function(){
+  function cargar(src,ok,fallo){ var s=document.createElement('script'); s.src=src; s.onload=ok; s.onerror=fallo; document.head.appendChild(s); }
+  function listo(){ window.iniciarGemelo(); }
+  cargar('/estatico/three.min.js', listo, function(){ cargar('https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js', listo, listo); });
+})();
+</script>
+</body>
+</html>

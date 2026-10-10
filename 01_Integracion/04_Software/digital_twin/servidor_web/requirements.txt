@@ -1,0 +1,6 @@
+# Servidor web del gemelo (PC servidor Windows) — Python 3.10 a 3.13 de 64 bits.
+# Se ejecuta desde la raíz del repositorio: python -m digital_twin.servidor_web
+# Usa core/mando.py y core/remoto.py (solo biblioteca estándar): copia el repositorio completo.
+aiohttp>=3.9,<4
+# MQTT opcional (--mqtt URL): el servidor escucha al puente por un broker en vez de /ws/planta.
+paho-mqtt>=2.0,<3

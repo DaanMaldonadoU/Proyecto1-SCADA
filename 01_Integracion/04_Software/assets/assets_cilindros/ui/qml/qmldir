@@ -1,0 +1,9 @@
+module ui
+singleton Theme 1.0 Theme.qml
+BotonIndustrial 1.0 BotonIndustrial.qml
+BotonPlano 1.0 BotonPlano.qml
+Led 1.0 Led.qml
+Panel 1.0 Panel.qml
+EtapaGrafcet 1.0 EtapaGrafcet.qml
+AnilloProgreso 1.0 AnilloProgreso.qml
+Cabecera 1.0 Cabecera.qml

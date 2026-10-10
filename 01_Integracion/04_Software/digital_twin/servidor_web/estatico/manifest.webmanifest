@@ -1,0 +1,15 @@
+{
+  "name": "Gemelo digital · Estación electroneumática",
+  "short_name": "Gemelo",
+  "description": "Gemelo digital 3D de la estación electroneumática con SLC 5/04: estado en vivo, GRAFCET, mando remoto por roles.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1c2438",
+  "theme_color": "#1c2438",
+  "lang": "es",
+  "icons": [
+    { "src": "/estatico/icono.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

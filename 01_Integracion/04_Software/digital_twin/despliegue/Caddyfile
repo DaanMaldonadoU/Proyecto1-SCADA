@@ -1,0 +1,29 @@
+# Caddyfile — proxy inverso con HTTPS automático (Let's Encrypt) para la PC servidor Windows.
+# Guía: mds/DESPLIEGUE_SERVIDOR.md §3 (opción A). Requiere que los dos nombres apunten en DNS a la IP
+# pública de esta PC y que los puertos 80 y 443 lleguen hasta ella (reenvío en el router si hay NAT).
+#
+# Instalar Caddy en Windows:  winget install --id CaddyServer.Caddy
+# Probar:                     caddy run --config Caddyfile
+# Como servicio:              caddy run ... bajo NSSM (ver la guía), o `caddy start`.
+
+# Gemelo digital (frontend 3D, API y WebSockets /ws/web y /ws/planta) -> servidor aiohttp local.
+digitaltwinscada.smartsensorslab.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3002 {
+		# aiohttp usa estas cabeceras para la cookie Secure, el Origin y la IP de auditoría.
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+		header_up X-Forwarded-For {remote_host}
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+}
+
+# Broker MQTT sobre WebSocket (Mosquitto, listener 9001 "protocol websockets") -> el puente del
+# laboratorio usa  mqtt+wss://puente:CLAVE@broker.smartsensorslab.com  (sale por 443, pasa firewalls).
+# El MQTT "crudo" (8883) no pasa por aquí: Mosquitto lo sirve directo con sus propios certificados.
+broker.smartsensorslab.com {
+	reverse_proxy 127.0.0.1:9001
+}

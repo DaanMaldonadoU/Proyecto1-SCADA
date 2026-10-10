@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prueba de animación · cilindros SVG</title>
+<style>
+  body { margin: 0; background: #1c1f24; color: #d7dbe0; font-family: Helvetica, Arial, sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 6px; }
+  p  { margin: 0 0 18px; color: #9aa1a9; font-size: 13px; }
+  .card { background: #262a30; border-radius: 10px; padding: 16px 18px 12px; margin-bottom: 20px; }
+  .stage { position: relative; width: 100%; }
+  .stage img { position: absolute; left: 0; top: 0; width: 100%; height: auto; display: block; }
+  .stage img.ghost { position: relative; visibility: hidden; }   /* fija la altura */
+  .ctl { display: flex; gap: 16px; align-items: center; margin-top: 8px; font-size: 13px; flex-wrap: wrap; }
+  input[type=range] { width: 320px; }
+  label { display: flex; gap: 6px; align-items: center; }
+  .sens { position: absolute; height: auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Cilindros por capas · prueba de animación</h1>
+  <p>Mueve el deslizador (0 = retraído, 1 = extendido). Es la misma superposición que hará QML: interior → muelle → vástago → camisa → sensores.</p>
+
+  <section class="card" id="big">
+    <div class="stage"></div>
+    <div class="ctl">
+      <strong>ISO 15552 · ø32 · 200 mm</strong>
+      <input type="range" min="0" max="1" step="0.005" value="0">
+      <label><input type="checkbox" class="corte" checked> ventana de corte</label>
+      <button class="ciclo">ciclo automático</button>
+    </div>
+  </section>
+
+  <section class="card" id="mini">
+    <div class="stage"></div>
+    <div class="ctl">
+      <strong>ISO 6432 · ø20 · 50 mm (retorno por muelle)</strong>
+      <input type="range" min="0" max="1" step="0.005" value="0">
+      <label><input type="checkbox" class="corte" checked> ventana de corte</label>
+      <button class="ciclo">ciclo automático</button>
+    </div>
+  </section>
+</main>
+
+<script>
+const CIL = {
+  big:  { dir: "iso15552_d32", vbW: 580, vbH: 78, carrera: 200, sc: [50, 59.3], se: [250, 59.3], muelle: null },
+  mini: { dir: "iso6432_d20",  vbW: 215, vbH: 40, carrera: 50,  sc: [30, 30.5], se: [80, 30.5], muelle: { L: 60, apoyo: 95.5 } },
+};
+
+function build(id) {
+  const g = CIL[id], sec = document.getElementById(id), st = sec.querySelector(".stage");
+  const layers = ["interior", "muelle", "vastago", "camisa_corte", "camisa"];
+  const img = {};
+  st.innerHTML = "";
+  const ghost = document.createElement("img"); ghost.src = `${g.dir}/camisa.svg`; ghost.className = "ghost"; st.appendChild(ghost);
+  for (const L of layers) {
+    if (L === "muelle" && !g.muelle) continue;
+    const im = document.createElement("img"); im.src = `${g.dir}/${L}.svg`; im.dataset.l = L; st.appendChild(im); img[L] = im;
+  }
+  const sens = {};
+  for (const k of ["sc", "se"]) {
+    const im = document.createElement("img"); im.className = "sens"; st.appendChild(im); sens[k] = im;
+  }
+  const range = sec.querySelector("input[type=range]"), corte = sec.querySelector(".corte");
+  function draw() {
+    const p = parseFloat(range.value), ppm = st.clientWidth / g.vbW, cut = corte.checked;
+    img.interior.style.visibility = cut ? "visible" : "hidden";
+    img.camisa_corte.style.visibility = cut ? "visible" : "hidden";
+    img.camisa.style.visibility = cut ? "hidden" : "visible";
+    img.vastago.style.transform = `translateX(${p * g.carrera * ppm}px)`;
+    if (g.muelle) {
+      const k = Math.max(0.08, (g.muelle.L - p * g.carrera) / g.muelle.L);
+      img.muelle.style.visibility = cut ? "visible" : "hidden";
+      img.muelle.style.transformOrigin = `${g.muelle.apoyo * ppm}px 0`;
+      img.muelle.style.transform = `scaleX(${k})`;
+    }
+    const x = p * g.carrera;
+    for (const [k, on] of [["sc", x < 3], ["se", x > g.carrera - 3]]) {
+      const im = sens[k], c = g[k];
+      im.src = `${g.dir}/sensor_${on ? "on" : "off"}.svg`;
+      im.style.width = 30 * ppm + "px"; im.style.left = (c[0] - 17) * ppm + "px"; im.style.top = (c[1] - 4) * ppm + "px";
+    }
+  }
+  range.addEventListener("input", draw); corte.addEventListener("change", draw); window.addEventListener("resize", draw);
+  let timer = null;
+  sec.querySelector(".ciclo").addEventListener("click", () => {
+    if (timer) { clearInterval(timer); timer = null; return; }
+    let t = 0;
+    timer = setInterval(() => { t += 0.02; range.value = (1 - Math.cos(t)) / 2; draw(); }, 16);
+  });
+  draw(); setTimeout(draw, 300);
+}
+build("big"); build("mini");
+</script>
+</body>
+</html>
